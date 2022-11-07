@@ -18,6 +18,18 @@ class Config:
     # the action for optimal cvar and optimal profit is different
     agent_gen_id = 1
 
+    # 6 non-renewable gens in t_auction_case
+    n_gens = 6
+    # gen_types = [None for _ in range(n_gens)]
+    gen_types = [
+        "CA_Valley Generating Station_unit5_P47",
+        "CO_Brush Power Projects_unitGT5_P79",
+        "CO_Pueblo Airport Generating Station_unitCT02_P94",
+        "GA_Dahlberg (Jackson County)_unit1_P92",
+        "GA_Dahlberg (Jackson County)_unit3_P93",
+        "GA_Dahlberg (Jackson County)_unit5_P92",
+    ]
+
     eval_frequency = 10
     n_samples = 500
     n_action_centers = 20

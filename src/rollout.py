@@ -25,15 +25,17 @@ class ElectricityMarket:
             load_data_path (str): load data path (txt file)
             renew_data_path (str): renew data path (txt file)
         """
+        self.engine = engine
         self.config = config
         self.LOAD_COEF = config.LOAD_COEF
         self.MAX_NEW_LOAD = config.MAX_NEW_LOAD
         self.WEIBUL_PAR = config.WEIBUL_PAR
         self.BETA_PAR1 = config.BETA_PAR1
         self.BETA_PAR2 = config.BETA_PAR2
-        self.cof = config.cof
+        self.cof = config.cof  # gen cost in generation
         self.agent_gen_id = config.agent_gen_id
-        self.engine = engine
+        self.n_gens = config.n_gens
+        self.gen_types = config.gen_types  # non-renewable gen types
 
         # load in each timestep
         self.loads = np.loadtxt(config.load_data_path) * self.LOAD_COEF
@@ -42,10 +44,28 @@ class ElectricityMarket:
         # scaled loads, wind Pg exp., solar Pg exp.
         self.loads, self.wind_gen_exps, self.solar_gen_exps = self.process_load_gen()
 
-        self.cems = pd.read_csv(config.cems_data_path)
+        # index_col = 0 to ignore the extra index column
+        self.cems_df = pd.read_csv(config.cems_data_path)
 
         self.timestep = 0
         self.LOG = get_logger()
+        self.setup_gen_emission_coef()
+
+    def setup_gen_emission_coef(self):
+        """Set up gen type in cems"""
+        gen_idxs = [
+            self.cems_df[self.cems_df["unit"] == gen_type].index[0]
+            for gen_type in self.gen_types
+        ]
+        self.gen_emission_coef_quad = self.cems_df.iloc[gen_idxs][
+            ["coef-2-emission-quad", "coef-1-emission-quad", "coef-0-emission-quad"]
+        ].values
+        self.gen_emission_coef_linear = self.cems_df.iloc[gen_idxs][
+            ["coef-1-emission-linear", "coef-0-emission-linear"]
+        ].values
+        self.gen_emission_split_point_x = self.cems_df.iloc[gen_idxs][
+            "split-point-x"
+        ].values
 
     def reset_timestep(self):
         """reset timestep"""
@@ -251,8 +271,11 @@ class ElectricityMarket:
         cvar = np.sort(profit)[:first_n].mean(0)
         return profit, cvar
 
-    def carbon_emission(self, clear_result: np.ndarray) -> np.ndarray:
+    def calc_carbon_emission(self, clear_result: np.ndarray) -> np.ndarray:
         """calculate carbon emission of gens based on market clearing result
+        the carbon emission is divided into quadratic and linear parts
+        quadratic: gen emission under the split point x
+        linear: gen emission over the split point x
 
         Args:
             clear_result (np.ndarray): market clearing result
@@ -260,7 +283,33 @@ class ElectricityMarket:
         Returns:
             emissions(np.ndarray): carbon emission of each gen
         """
-        pass
+        gen_clear_qty = clear_result[:, 0]
+
+        # linear emission for gen quantity over the split point
+        gen_qty_linear_emission = np.maximum(
+            gen_clear_qty - self.gen_emission_split_point_x, 0
+        )
+        # quad emission for gen quantity under the split point
+        gen_qty_quad_emission = np.minimum(
+            gen_clear_qty, self.gen_emission_split_point_x
+        )
+        gen_emission_quad = (
+            gen_qty_quad_emission * (self.gen_emission_coef_quad[:, 0] ** 2)
+            + gen_qty_quad_emission * self.gen_emission_coef_quad[:, 1]
+            + self.gen_emission_coef_quad[:, 2]
+        )
+        gen_emission_linear = (
+            gen_qty_linear_emission * self.gen_emission_coef_linear[:, 0]
+            + self.gen_emission_coef_linear[:, 1]
+        )
+        gen_emission = gen_emission_quad + gen_emission_linear
+        # if gen clear quantity is 0, it does not launch, therefore it has no emission
+        # fix the bug: constant term added on the emission
+        gen_emission = [
+            gen_emission[i] if gen_clear_qty[i] > 0.0 else 0.0
+            for i in range(self.n_gens)
+        ]
+        return gen_emission
 
 
 if __name__ == "__main__":
@@ -269,4 +318,5 @@ if __name__ == "__main__":
         Config,
         engine,
     )
-    elec_market.run_step(1.0)
+    res = elec_market.run_step(1.0)
+    elec_market.calc_carbon_emission(res)
