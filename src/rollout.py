@@ -1,9 +1,10 @@
-from typing import List, Tuple
+import math
+from typing import Tuple
+
+import matlab.engine
 import numpy as np
 import pandas as pd
-import matlab
-import math
-from tqdm import tqdm
+
 from config import Config
 from utils import get_logger
 
@@ -16,8 +17,6 @@ class ElectricityMarket:
         self,
         config: Config,
         engine: matlab.engine,
-        load_data_path: str,
-        renew_data_path: str,
     ) -> None:
         """
         Args:
@@ -26,29 +25,71 @@ class ElectricityMarket:
             load_data_path (str): load data path (txt file)
             renew_data_path (str): renew data path (txt file)
         """
-
         self.config = config
-        self.cof = config.cof
-        self.agent_gen_id = config.agent_gen_id
-        self.engine = engine
-        # load in each timestep
-        self.loads = np.loadtxt(load_data_path) * self.LOAD_COEF
-        # renews (wind and solar) in each timestep
-        self.renews = np.loadtxt(renew_data_path)
-
         self.LOAD_COEF = config.LOAD_COEF
         self.MAX_NEW_LOAD = config.MAX_NEW_LOAD
         self.WEIBUL_PAR = config.WEIBUL_PAR
         self.BETA_PAR1 = config.BETA_PAR1
         self.BETA_PAR2 = config.BETA_PAR2
+        self.cof = config.cof
+        self.agent_gen_id = config.agent_gen_id
+        self.engine = engine
+
+        # load in each timestep
+        self.loads = np.loadtxt(config.load_data_path) * self.LOAD_COEF
+        # renews (wind and solar) in each timestep
+        self.renews_exp = np.loadtxt(config.renew_data_path)
+        # scaled loads, wind Pg exp., solar Pg exp.
+        self.loads, self.wind_gen_exps, self.solar_gen_exps = self.process_load_gen()
+
+        self.cems = pd.read_csv(config.cems_data_path)
 
         self.timestep = 0
         self.LOG = get_logger()
 
     def reset_timestep(self):
+        """reset timestep"""
         self.timestep = 0
 
-    def run_step(
+    def increase_timestep(self):
+        """increase timestep and reset"""
+        self.timestep += 1
+        if self.timestep == len(self.loads):
+            self.reset_timestep()
+
+    def run_step(self, gen_action):
+        """run eletricity market in one timestep
+
+        Args:
+            gen_action (float): gen action coef (bidding strategy)
+
+        Returns:
+            result (np.ndarray): market clearing result of agent_gen_id
+                                col 0: quantity
+                                col 1: price
+                                col 2: cost
+        """
+        load_step = self.loads[self.timestep]
+        wind_exp_step = self.wind_gen_exps[self.timestep]
+        solar_exp_step = self.solar_gen_exps[self.timestep]
+
+        # sample solar wind in this step
+        solar_gen_step, wind_gen1_step, wind_gen2_step = self.sample_sol_wind_gen_step(
+            wind_exp_step, solar_exp_step
+        )
+        gmax = self.config.gmax_fn(solar_gen_step, wind_gen1_step)
+        offers_qty, offers_prc, qty_prc_pairs = self.generate_piecewise_price(
+            gmax, self.cof, gen_action
+        )
+
+        result = self._run_step(
+            wind_gen1_step, solar_gen_step, load_step, offers_qty, offers_prc
+        )
+
+        self.increase_timestep()
+        return result
+
+    def _run_step(
         self,
         wind: float,
         solar: float,
@@ -66,7 +107,7 @@ class ElectricityMarket:
             offers_qty (np.ndarray): Pg quantities in offer
             offers_prc (np.ndarray): Pg price in offer
         """
-        result = self.enging.price_sim(
+        result = self.engine.price_sim(
             matlab.double([load]),
             matlab.double([solar]),
             matlab.double([wind]),
@@ -76,14 +117,14 @@ class ElectricityMarket:
         )
 
         if not result["success"]:
-            self.LOG.error(f"run market not success!")
+            self.LOG.warning(f"run market not success!")
             return
         else:
-            return np.array(result["clear"][self.agent_gen_id])
+            return np.array(result["clear"])
 
     @staticmethod
     def calc_gencost(cof: np.ndarray, qty: np.array, gen_id: int) -> float:
-        """calculate cost of a gen
+        """calculate cost of a gen, one or multiply steps
 
         Args:
             cof (np.ndarray): gencost (polynomial) coef
@@ -95,27 +136,27 @@ class ElectricityMarket:
         """
         return cof[gen_id, 0] * qty**2 + cof[gen_id, 1] * qty + cof[gen_id, 2]
 
-    def process_load_gen(self) -> List[np.ndarray, np.ndarray, np.ndarray]:
+    def process_load_gen(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """scale load, renewable_gen
 
         Returns:
-            List[np.array]: load, wind, sol
+            Tuple[np.array]: scaled loads, wind Pg expectation, solar Pg expactation
         """
         mean_load = np.mean(self.loads)
         loads = (self.loads - mean_load) / mean_load + 1
 
-        wind_gen = self.renews[:, 0]
-        solar_gen = self.renews[:, 1]
+        wind_gen_exps = self.renews_exp[:, 0]
+        solar_gen_exps = self.renews_exp[:, 1]
 
-        wind_gen = wind_gen / np.max(wind_gen)
-        sol_gen = solar_gen / np.max(solar_gen)
-        return loads, wind_gen, sol_gen
+        wind_gen_exps = wind_gen_exps / np.max(wind_gen_exps)
+        sol_gen = solar_gen_exps / np.max(solar_gen_exps)
+        return loads, wind_gen_exps, sol_gen
 
     def sample_sol_wind_gen_step(
         self,
         wind: float,
         solar: float,
-    ) -> List[float, float, float]:
+    ) -> Tuple[float, float, float]:
         """sample solar and wind gen in a step
 
         Args:
@@ -123,7 +164,7 @@ class ElectricityMarket:
             solar (float): solar expectation
 
         Returns:
-            List[float, float, float]: solar power, wind power1, wind power2
+            Tuple[float, float, float]: solar power, wind power1, wind power2
         """
         wind_gen = wind * self.MAX_NEW_LOAD
         sol_gen = solar * self.MAX_NEW_LOAD
@@ -147,16 +188,19 @@ class ElectricityMarket:
 
     def generate_piecewise_price(
         self, gmax: list, cof: np.ndarray, gen_action: float = 1.0
-    ) -> List[np.ndarray, np.ndarray, np.ndarray]:
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """generate bidding strategy (price, vol) pair and gencost
 
         Args:
             gmax (list): maximum Pg of each gen
             cof (np.ndarray): cof of gen cost
-            gen_action (float): agent_gen action (overall coefficient in gencost fn). Defaults to 1.0
+            gen_action (float): agent_gen action (overall coefficient in gencost fn).
+                                Defaults to 1.0
 
         Returns:
-            List[np.ndarray, np.ndarray, np.ndarray]: quantities in offer, prices in offer, qty_prc_pairs
+            offers_qty(np.ndarray): quantities in offer
+            offers_prc(np.ndarray): prices in offer
+            qty_prc_pairs(np.ndarray): quantity price pairs
         """
 
         # 4 piecewise bidding
@@ -189,7 +233,7 @@ class ElectricityMarket:
         return offers_qty, offers_prc, qty_prc_pairs
 
     def calc_profit_cvar(
-        self, cof: np.ndarray, result: np.ndarray
+        self, cof: np.ndarray, clear_result_gen: np.ndarray
     ) -> Tuple[np.ndarray, float]:
         """calculate profit of the agent gen based on price_sim result
 
@@ -201,8 +245,28 @@ class ElectricityMarket:
 
         Returns:
         """
-        cost = self.calc_gencost(cof, result[:, 0], self.agent_gen_id)
-        profit = result[:, 0] * result[:, 1] - cost
+        cost = self.calc_gencost(cof, clear_result_gen[:, 0], self.agent_gen_id)
+        profit = clear_result_gen[:, 0] * clear_result_gen[:, 1] - cost
         first_n = math.floor(profit.shape[0] // 10)
         cvar = np.sort(profit)[:first_n].mean(0)
         return profit, cvar
+
+    def carbon_emission(self, clear_result: np.ndarray) -> np.ndarray:
+        """calculate carbon emission of gens based on market clearing result
+
+        Args:
+            clear_result (np.ndarray): market clearing result
+
+        Returns:
+            emissions(np.ndarray): carbon emission of each gen
+        """
+        pass
+
+
+if __name__ == "__main__":
+    engine = matlab.engine.start_matlab()
+    elec_market = ElectricityMarket(
+        Config,
+        engine,
+    )
+    elec_market.run_step(1.0)

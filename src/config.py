@@ -14,7 +14,6 @@ class Config:
     BETA_PAR1 = 4
     BETA_PAR2 = 2
 
-
     # select gen_id = 1 because in select_gen.ipynb
     # the action for optimal cvar and optimal profit is different
     agent_gen_id = 1
@@ -23,7 +22,6 @@ class Config:
     n_samples = 500
     n_action_centers = 20
     n_clusters = 8
-
 
     cof = np.array(
         [
@@ -36,6 +34,11 @@ class Config:
         ]
     )
 
-    gmax_fn = lambda _, now_sol_gen, now_wind_gen1: np.array(
-        [60, 60, 60, 60, 60, 60, now_sol_gen, now_wind_gen1]
+    gmax_fn = lambda sol_gen_step, wind_gen1_step: np.array(
+        [60, 60, 60, 60, 60, 60, sol_gen_step, wind_gen1_step]
     )
+
+    # data
+    load_data_path = "../data/load.txt"
+    renew_data_path = "../data/30min.txt"
+    cems_data_path = "../data/cems_coef.csv"
