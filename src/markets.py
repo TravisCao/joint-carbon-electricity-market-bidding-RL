@@ -1,5 +1,14 @@
+"""
+Project: src
+File Created: Wednesday, 9th November 2022 10:57:53 am
+Author: Yuji Cao (travisyjcao@gmail.com)
+-----
+Last Modified: Wednesday, November 9th 2022, 12:34:45 pm
+Modified By: Yuji Cao
+"""
+
 import math
-from typing import Tuple
+from typing import Tuple, List
 
 import matlab.engine
 import numpy as np
@@ -7,7 +16,7 @@ import pandas as pd
 
 from config import Config
 from utils import get_logger
-
+from gencon import GenCon
 
 ## electricity market
 class ElectricityMarket:
@@ -15,6 +24,7 @@ class ElectricityMarket:
 
     def __init__(
         self,
+        gens: List[GenCon],
         config: Config,
         engine: matlab.engine,
     ) -> None:
@@ -32,7 +42,7 @@ class ElectricityMarket:
         self.WEIBUL_PAR = config.WEIBUL_PAR
         self.BETA_PAR1 = config.BETA_PAR1
         self.BETA_PAR2 = config.BETA_PAR2
-        self.cof = config.cof  # gen cost in generation
+        self.gencost_coef = config.gencost_coef  # gen cost in generation
         self.agent_gen_id = config.agent_gen_id
         self.n_gens = config.n_gens
         self.gen_types = config.gen_types  # non-renewable gen types
@@ -44,28 +54,13 @@ class ElectricityMarket:
         # scaled loads, wind Pg exp., solar Pg exp.
         self.loads, self.wind_gen_exps, self.solar_gen_exps = self.process_load_gen()
 
-        # index_col = 0 to ignore the extra index column
-        self.cems_df = pd.read_csv(config.cems_data_path)
-
         self.timestep = 0
-        self.LOG = get_logger()
-        self.setup_gen_emission_coef()
 
-    def setup_gen_emission_coef(self):
-        """Set up gen type in cems"""
-        gen_idxs = [
-            self.cems_df[self.cems_df["unit"] == gen_type].index[0]
-            for gen_type in self.gen_types
-        ]
-        self.gen_emission_coef_quad = self.cems_df.iloc[gen_idxs][
-            ["coef-2-emission-quad", "coef-1-emission-quad", "coef-0-emission-quad"]
-        ].values
-        self.gen_emission_coef_linear = self.cems_df.iloc[gen_idxs][
-            ["coef-1-emission-linear", "coef-0-emission-linear"]
-        ].values
-        self.gen_emission_split_point_x = self.cems_df.iloc[gen_idxs][
-            "split-point-x"
-        ].values
+        # column index in run result
+        self.PRC_COL = 1
+        self.QTY_COL = 0
+
+        self.LOG = get_logger()
 
     def reset_timestep(self):
         """reset timestep"""
@@ -99,7 +94,7 @@ class ElectricityMarket:
         )
         gmax = self.config.gmax_fn(solar_gen_step, wind_gen1_step)
         offers_qty, offers_prc, qty_prc_pairs = self.generate_piecewise_price(
-            gmax, self.cof, gen_action
+            gmax, self.gencost_coef, gen_action
         )
 
         result = self._run_step(
@@ -137,24 +132,10 @@ class ElectricityMarket:
         )
 
         if not result["success"]:
-            self.LOG.warning(f"run market not success!")
+            self.LOG.warning("run market not success!")
             return
         else:
             return np.array(result["clear"])
-
-    @staticmethod
-    def calc_gencost(cof: np.ndarray, qty: np.array, gen_id: int) -> float:
-        """calculate cost of a gen, one or multiply steps
-
-        Args:
-            cof (np.ndarray): gencost (polynomial) coef
-            qty (np.array): gen quantity
-            gen_id (int): gen id
-
-        Returns:
-            float: overall cost of the gen
-        """
-        return cof[gen_id, 0] * qty**2 + cof[gen_id, 1] * qty + cof[gen_id, 2]
 
     def process_load_gen(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """scale load, renewable_gen
@@ -252,69 +233,77 @@ class ElectricityMarket:
             ) / offers_qty[:, i]
         return offers_qty, offers_prc, qty_prc_pairs
 
-    def calc_profit_cvar(
-        self, cof: np.ndarray, clear_result_gen: np.ndarray
-    ) -> Tuple[np.ndarray, float]:
-        """calculate profit of the agent gen based on price_sim result
+    def calc_gencost(self, qty: np.array) -> float:
+        """calculate costs of all gens, one or multiply runs
 
         Args:
-            cof (np.ndarray): cost coef of gen
-            result (np.ndarray): results of multiple price_sim steps, column 0 is qty,
-                                 column 1 is price, column 3 is gencost.
-                                 However, we use the gencost based on coef
+            cof (np.ndarray): gencost (polynomial) coef
+            qty (np.array): gen quantity in one/multiple runs
 
         Returns:
+            float: overall cost of the gen
         """
-        cost = self.calc_gencost(cof, clear_result_gen[:, 0], self.agent_gen_id)
-        profit = clear_result_gen[:, 0] * clear_result_gen[:, 1] - cost
+        return (
+            self.gencost_coef[:, 0] * qty**2
+            + self.gencost_coef[:, 1] * qty
+            + self.gencost_coef[:, 2]
+        )
+
+    def calc_agent_gen_cvar(
+        self, clear_result_gen: np.ndarray
+    ) -> Tuple[np.ndarray, float]:
+        """calculate cvar of the agent gen based on price_sim result in multiple runs
+
+        assumes that clear_result_gen is the result of one gen in multiple runs
+
+        cost function based on self.cof
+
+        Args:
+            clear_result_gen (np.ndarray): results of multiple price_sim steps
+                                 we use the gencost based on polynomial
+
+        Returns:
+            profit (np.ndarray): profits in multiple runs
+            cvar (float): cvar of the gen in multiple runs
+        """
+        profit = self.calc_gen_profit(clear_result_gen)
         first_n = math.floor(profit.shape[0] // 10)
         cvar = np.sort(profit)[:first_n].mean(0)
-        return profit, cvar
+        return cvar
 
-    def calc_carbon_emission(self, clear_result: np.ndarray) -> np.ndarray:
-        """calculate carbon emission of gens based on market clearing result
-        the carbon emission is divided into quadratic and linear parts
-        quadratic: gen emission under the split point x
-        linear: gen emission over the split point x
+    def calc_gen_profit(
+        self,
+        clear_result: np.ndarray,
+    ) -> np.ndarray:
+        """calculate profits of all gens or one gen in multiple runs
 
         Args:
-            clear_result (np.ndarray): market clearing result
+            clear_result (np.ndarray): clearing result of one price_sim run
 
         Returns:
-            emissions(np.ndarray): carbon emission of each gen
+            np.ndarray: _description_
         """
-        gen_clear_qty = clear_result[:, 0]
+        costs = self.calc_gencost(clear_result[:, self.QTY_COL])
+        return clear_result[:, self.QTY_COL] * clear_result[:, self.PRC_COL] - costs
 
-        # linear emission for gen quantity over the split point
-        gen_qty_linear_emission = np.maximum(
-            gen_clear_qty - self.gen_emission_split_point_x, 0
-        )
-        # quad emission for gen quantity under the split point
-        gen_qty_quad_emission = np.minimum(
-            gen_clear_qty, self.gen_emission_split_point_x
-        )
-        gen_emission_quad = (
-            gen_qty_quad_emission * (self.gen_emission_coef_quad[:, 0] ** 2)
-            + gen_qty_quad_emission * self.gen_emission_coef_quad[:, 1]
-            + self.gen_emission_coef_quad[:, 2]
-        )
-        gen_emission_linear = (
-            gen_qty_linear_emission * self.gen_emission_coef_linear[:, 0]
-            + self.gen_emission_coef_linear[:, 1]
-        )
-        gen_emission = gen_emission_quad + gen_emission_linear
-        # if gen clear quantity is 0, it does not launch, therefore it has no emission
-        # fix the bug: constant term added on the emission
-        gen_emission = [
-            gen_emission[i] if gen_clear_qty[i] > 0.0 else 0.0
-            for i in range(self.n_gens)
-        ]
-        return gen_emission
+
+class CarbonMarket:
+    """
+    Carbon market
+    """
+
+    def __init__(self, config) -> None:
+
+        self.carbon_price = 0.0
+        self.carbon_quota = 0.0
+        self.day_t = 0
 
 
 if __name__ == "__main__":
     engine = matlab.engine.start_matlab()
+    gens = [GenCon(i, Config.gen_types[i], Config) for i in range(Config.n_gens)]
     elec_market = ElectricityMarket(
+        gens,
         Config,
         engine,
     )

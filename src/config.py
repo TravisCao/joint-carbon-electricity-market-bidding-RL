@@ -20,6 +20,7 @@ class Config:
 
     # 6 non-renewable gens in t_auction_case
     n_gens = 6
+
     # gen_types = [None for _ in range(n_gens)]
     gen_types = [
         "CA_Valley Generating Station_unit5_P47",
@@ -35,7 +36,7 @@ class Config:
     n_action_centers = 20
     n_clusters = 8
 
-    cof = np.array(
+    gencost_coef = np.array(
         [
             [0.5900, 9.0000, 0],
             [0.6875, 8.500, 0],
@@ -46,11 +47,23 @@ class Config:
         ]
     )
 
-    gmax_fn = lambda sol_gen_step, wind_gen1_step: np.array(
-        [60, 60, 60, 60, 60, 60, sol_gen_step, wind_gen1_step]
-    )
+    # max gen for non-renewable gens
+    gmax = 60
 
     # data
     load_data_path = "../data/load.txt"
     renew_data_path = "../data/30min.txt"
     cems_data_path = "../data/cems_coef.csv"
+
+    @property
+    def gmax_fn(self, sol_gen_step, wind_gen1_step):
+        return [
+            self.gmax,
+            self.gmax,
+            self.gmax,
+            self.gmax,
+            self.gmax,
+            self.gmax,
+            sol_gen_step,
+            wind_gen1_step,
+        ]
