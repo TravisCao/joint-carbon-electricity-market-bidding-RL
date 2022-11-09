@@ -1,5 +1,5 @@
 % function [result] = priceSim(load,sola_load,wind_load,max_new_load)
-function [result] = priceSim(load, sola_load, wind_load, max_new_load, offers_qty, offers_prc)
+function [result] = price_sim(load, sola_load, wind_load, max_new_load, offers_qty, offers_prc)
     mkt.OPF = 'AC';
     mkt.auction_type = 1;
     mpc = loadcase('t_auction_case');

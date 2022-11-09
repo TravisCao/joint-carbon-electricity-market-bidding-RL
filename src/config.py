@@ -21,8 +21,10 @@ class Config:
     # 6 non-renewable gens in t_auction_case
     n_gens = 6
 
+    n_timesteps = 48
+
     # gen_types = [None for _ in range(n_gens)]
-    gen_types = [
+    gen_units = [
         "CA_Valley Generating Station_unit5_P47",
         "CO_Brush Power Projects_unitGT5_P79",
         "CO_Pueblo Airport Generating Station_unitCT02_P94",
@@ -30,11 +32,6 @@ class Config:
         "GA_Dahlberg (Jackson County)_unit3_P93",
         "GA_Dahlberg (Jackson County)_unit5_P92",
     ]
-
-    eval_frequency = 10
-    n_samples = 500
-    n_action_centers = 20
-    n_clusters = 8
 
     gencost_coef = np.array(
         [
@@ -54,16 +51,3 @@ class Config:
     load_data_path = "../data/load.txt"
     renew_data_path = "../data/30min.txt"
     cems_data_path = "../data/cems_coef.csv"
-
-    @property
-    def gmax_fn(self, sol_gen_step, wind_gen1_step):
-        return [
-            self.gmax,
-            self.gmax,
-            self.gmax,
-            self.gmax,
-            self.gmax,
-            self.gmax,
-            sol_gen_step,
-            wind_gen1_step,
-        ]

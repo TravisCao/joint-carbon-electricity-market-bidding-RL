@@ -24,7 +24,6 @@ class ElectricityMarket:
 
     def __init__(
         self,
-        gens: List[GenCon],
         config: Config,
         engine: matlab.engine,
     ) -> None:
@@ -32,20 +31,20 @@ class ElectricityMarket:
         Args:
             config (Config): configuration file
             engine (matlab.engine): matlab engine
-            load_data_path (str): load data path (txt file)
-            renew_data_path (str): renew data path (txt file)
         """
         self.engine = engine
         self.config = config
         self.LOAD_COEF = config.LOAD_COEF
         self.MAX_NEW_LOAD = config.MAX_NEW_LOAD
+        self.gencost_coef = config.gencost_coef  # gen cost in generation
+        self.n_gens = config.n_gens
+
+        self.agent_gen_id = config.agent_gen_id
+
+        self.MAX_NEW_LOAD = config.MAX_NEW_LOAD
         self.WEIBUL_PAR = config.WEIBUL_PAR
         self.BETA_PAR1 = config.BETA_PAR1
         self.BETA_PAR2 = config.BETA_PAR2
-        self.gencost_coef = config.gencost_coef  # gen cost in generation
-        self.agent_gen_id = config.agent_gen_id
-        self.n_gens = config.n_gens
-        self.gen_types = config.gen_types  # non-renewable gen types
 
         # load in each timestep
         self.loads = np.loadtxt(config.load_data_path) * self.LOAD_COEF
@@ -72,11 +71,11 @@ class ElectricityMarket:
         if self.timestep == len(self.loads):
             self.reset_timestep()
 
-    def run_step(self, gen_action):
+    def run_step(self, agent_gen_action: float):
         """run eletricity market in one timestep
 
         Args:
-            gen_action (float): gen action coef (bidding strategy)
+            agent_gen_action (float): gen action coef (bidding strategy)
 
         Returns:
             result (np.ndarray): market clearing result of agent_gen_id
@@ -92,9 +91,9 @@ class ElectricityMarket:
         solar_gen_step, wind_gen1_step, wind_gen2_step = self.sample_sol_wind_gen_step(
             wind_exp_step, solar_exp_step
         )
-        gmax = self.config.gmax_fn(solar_gen_step, wind_gen1_step)
+
         offers_qty, offers_prc, qty_prc_pairs = self.generate_piecewise_price(
-            gmax, self.gencost_coef, gen_action
+            self.gencost_coef, agent_gen_action
         )
 
         result = self._run_step(
@@ -153,6 +152,55 @@ class ElectricityMarket:
         sol_gen = solar_gen_exps / np.max(solar_gen_exps)
         return loads, wind_gen_exps, sol_gen
 
+    def generate_piecewise_price(
+        self, cof: np.ndarray, agent_gen_action: float = 1.0
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """generate bidding strategy (price, vol) pair and gencost
+
+        assumes only the agent gen take bidding action
+        and other gens' bidding strategy are always 1
+
+        Args:
+            cof (np.ndarray): cof of gen cost
+            agent_gen_action (float): agent_gen action (overall coefficient in gencost fn).
+                                Defaults to 1.0
+
+        Returns:
+            offers_qty(np.ndarray): quantities in offer
+            offers_prc(np.ndarray): prices in offer
+            qty_prc_pairs(np.ndarray): quantity price pairs
+        """
+
+        # 4 piecewise bidding
+        n_piecewise = 4
+
+        # avoid inplace changes on np.array
+        tmp_cof = np.copy(cof)
+        tmp_cof[self.agent_gen_id, :] = cof[self.agent_gen_id, :] * agent_gen_action
+
+        gmax = [self.config.gmax for _ in range(self.n_gens)]
+
+        # price, vol pairs
+        qty_prc_pairs = np.zeros((self.n_gens, n_piecewise * 2))
+        for i in range(self.n_gens):
+            cof1 = tmp_cof[i, 0]
+            cof2 = tmp_cof[i, 1]
+            cof3 = tmp_cof[i, 2]
+            gen_gmax = gmax[i]
+            for j in range(n_piecewise):
+                cur_vol = gen_gmax / (n_piecewise - 1) * j
+                cur_pri = cof1 * cur_vol**2 + cof2 * cur_vol + cof3
+                qty_prc_pairs[i, 2 * j] = cur_vol
+                qty_prc_pairs[i, 2 * j + 1] = cur_pri
+        offers_qty = np.zeros((self.n_gens, n_piecewise - 1))
+        offers_prc = np.zeros((self.n_gens, n_piecewise - 1))
+        for i in range(n_piecewise - 1):
+            offers_qty[:, i] = qty_prc_pairs[:, (i + 1) * 2] - qty_prc_pairs[:, i * 2]
+            offers_prc[:, i] = (
+                qty_prc_pairs[:, (i + 1) * 2 + 1] - qty_prc_pairs[:, i * 2 + 1]
+            ) / offers_qty[:, i]
+        return offers_qty, offers_prc, qty_prc_pairs
+
     def sample_sol_wind_gen_step(
         self,
         wind: float,
@@ -187,105 +235,6 @@ class ElectricityMarket:
         sol_gen = max(sol_gen * 0.8, sol_gen)
         return sol_gen, wind_gen1, wind_gen2
 
-    def generate_piecewise_price(
-        self, gmax: list, cof: np.ndarray, gen_action: float = 1.0
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-        """generate bidding strategy (price, vol) pair and gencost
-
-        Args:
-            gmax (list): maximum Pg of each gen
-            cof (np.ndarray): cof of gen cost
-            gen_action (float): agent_gen action (overall coefficient in gencost fn).
-                                Defaults to 1.0
-
-        Returns:
-            offers_qty(np.ndarray): quantities in offer
-            offers_prc(np.ndarray): prices in offer
-            qty_prc_pairs(np.ndarray): quantity price pairs
-        """
-
-        # 4 piecewise bidding
-        n_piecewise = 4
-
-        # avoid inplace changes on np.array
-        tmp_cof = np.copy(cof)
-        tmp_cof[self.agent_gen_id, :] = cof[self.agent_gen_id, :] * gen_action
-        n_gen = cof.shape[0]
-
-        # price, vol pairs
-        qty_prc_pairs = np.zeros((n_gen, n_piecewise * 2))
-        for i in range(n_gen):
-            cof1 = tmp_cof[i, 0]
-            cof2 = tmp_cof[i, 1]
-            cof3 = tmp_cof[i, 2]
-            gen_gmax = gmax[i]
-            for j in range(n_piecewise):
-                cur_vol = gen_gmax / (n_piecewise - 1) * j
-                cur_pri = cof1 * cur_vol**2 + cof2 * cur_vol + cof3
-                qty_prc_pairs[i, 2 * j] = cur_vol
-                qty_prc_pairs[i, 2 * j + 1] = cur_pri
-        offers_qty = np.zeros((n_gen, n_piecewise - 1))
-        offers_prc = np.zeros((n_gen, n_piecewise - 1))
-        for i in range(n_piecewise - 1):
-            offers_qty[:, i] = qty_prc_pairs[:, (i + 1) * 2] - qty_prc_pairs[:, i * 2]
-            offers_prc[:, i] = (
-                qty_prc_pairs[:, (i + 1) * 2 + 1] - qty_prc_pairs[:, i * 2 + 1]
-            ) / offers_qty[:, i]
-        return offers_qty, offers_prc, qty_prc_pairs
-
-    def calc_gencost(self, qty: np.array) -> float:
-        """calculate costs of all gens, one or multiply runs
-
-        Args:
-            cof (np.ndarray): gencost (polynomial) coef
-            qty (np.array): gen quantity in one/multiple runs
-
-        Returns:
-            float: overall cost of the gen
-        """
-        return (
-            self.gencost_coef[:, 0] * qty**2
-            + self.gencost_coef[:, 1] * qty
-            + self.gencost_coef[:, 2]
-        )
-
-    def calc_agent_gen_cvar(
-        self, clear_result_gen: np.ndarray
-    ) -> Tuple[np.ndarray, float]:
-        """calculate cvar of the agent gen based on price_sim result in multiple runs
-
-        assumes that clear_result_gen is the result of one gen in multiple runs
-
-        cost function based on self.cof
-
-        Args:
-            clear_result_gen (np.ndarray): results of multiple price_sim steps
-                                 we use the gencost based on polynomial
-
-        Returns:
-            profit (np.ndarray): profits in multiple runs
-            cvar (float): cvar of the gen in multiple runs
-        """
-        profit = self.calc_gen_profit(clear_result_gen)
-        first_n = math.floor(profit.shape[0] // 10)
-        cvar = np.sort(profit)[:first_n].mean(0)
-        return cvar
-
-    def calc_gen_profit(
-        self,
-        clear_result: np.ndarray,
-    ) -> np.ndarray:
-        """calculate profits of all gens or one gen in multiple runs
-
-        Args:
-            clear_result (np.ndarray): clearing result of one price_sim run
-
-        Returns:
-            np.ndarray: _description_
-        """
-        costs = self.calc_gencost(clear_result[:, self.QTY_COL])
-        return clear_result[:, self.QTY_COL] * clear_result[:, self.PRC_COL] - costs
-
 
 class CarbonMarket:
     """
@@ -301,9 +250,11 @@ class CarbonMarket:
 
 if __name__ == "__main__":
     engine = matlab.engine.start_matlab()
-    gens = [GenCon(i, Config.gen_types[i], Config) for i in range(Config.n_gens)]
+    non_renrewable_gens = [
+        GenCon(i, "non-renewable", Config.gen_units[i], Config)
+        for i in range(Config.n_gens)
+    ]
     elec_market = ElectricityMarket(
-        gens,
         Config,
         engine,
     )

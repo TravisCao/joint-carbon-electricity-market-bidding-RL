@@ -1,4 +1,4 @@
-from typing import Tuple
+from typing import Tuple, Union
 
 import numpy as np
 import pandas as pd
@@ -12,28 +12,39 @@ class GenCon:
     and carbon market
     """
 
-    def __init__(self, gen_id: int, gen_type: str, config: Config) -> None:
+    def __init__(
+        self,
+        gen_id: int,
+        gen_unit: str,
+        config: Config,
+    ) -> None:
+        """
+
+        Args:
+            gen_id (int): gen id
+            gen_unit (Union[str, None]): None if "non-renewable"
+                                        else gen_unit str
+            config (Config): config
+        """
         self.gen_id = gen_id
         self.carbon_quota = 0.0
         self.carbon_emission = 0.0
-        self.gen_type = gen_type
+        self.gen_unit = gen_unit
         self.config = config
 
-        # index_col = 0 to ignore the extra index column
         self.cems_df = pd.read_csv(config.cems_data_path)
         self.gen_emission_coef_quad = None
         self.gen_emission_coef_linear = None
         self.gen_emission_split_point_x = None
         self.gencost_coef = None
         self.setup_gen_coef()
-
         self.gmax = config.gmax
 
     def setup_gen_coef(self):
         """
         Set up gen coef based on gen_id and gen_type
         """
-        gen_idx = self.cems_df[self.cems_df["unit"] == self.gen_type].index[0]
+        gen_idx = self.cems_df[self.cems_df["unit"] == self.gen_unit].index[0]
         self.gen_emission_coef_quad = self.cems_df.iloc[gen_idx][
             ["coef-2-emission-quad", "coef-1-emission-quad", "coef-0-emission-quad"]
         ].values
@@ -123,6 +134,6 @@ class GenCon:
 
 
 if __name__ == "__main__":
-    gen = GenCon(1, Config.gen_types[2], Config)
+    gen = GenCon(1, Config.gen_units[2], Config)
     gen.calc_carbon_emission(1111)
     gen.generate_piecewise_price(1.5)
