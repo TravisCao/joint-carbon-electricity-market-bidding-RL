@@ -40,13 +40,9 @@ for day in trange(days):
             )
 
     carb_market.set_gen_emission(np.sum(emission, axis=0))
-
     prev_emission = carb_market.get_emission_record()
-
     carbon_allowance_now = carb_market.get_allowance()
-
     remaining_time = carb_market.get_remaining_time()
-
     agent_action = agent.act(
         prev_emission,
         carbon_allowance_now,

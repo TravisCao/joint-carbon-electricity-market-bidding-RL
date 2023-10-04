@@ -18,7 +18,7 @@ class ElecMktEnv:
         res = self.market.run_step(action)
         r = self.market.calc_gen_reward(res)
         obs = self.market.get_state()
-        terminated = False
+        terminated = self.market.terminated
         info = None
         return (obs, r, terminated, info)
 

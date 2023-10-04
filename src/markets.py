@@ -43,6 +43,8 @@ class ElectricityMarket:
 
         self.timestep = 0
 
+        self.terminated = False
+
         # column index in run result
         self.PRC_COL = 1
         self.QTY_COL = 0
@@ -52,27 +54,33 @@ class ElectricityMarket:
     def reset_timestep(self):
         """reset timestep"""
         self.timestep = 0
+        self.terminated = False
 
     def reset(self):
         self.reset_timestep()
-        return (
-            self.loads[self.timestep],
-            self.wind_gen_exps[self.timestep],
-            self.solar_gen_exps[self.timestep],
+        return np.array(
+            [
+                self.loads[self.timestep],
+                self.wind_gen_exps[self.timestep],
+                self.solar_gen_exps[self.timestep],
+            ]
         )
 
     def get_state(self):
-        return (
-            self.loads[self.timestep],
-            self.wind_gen_exps[self.timestep],
-            self.solar_gen_exps[self.timestep],
+        return np.array(
+            [
+                self.loads[self.timestep],
+                self.wind_gen_exps[self.timestep],
+                self.solar_gen_exps[self.timestep],
+                self.timestep,
+            ]
         )
 
     def increase_timestep(self):
         """increase timestep and reset"""
         self.timestep += 1
         if self.timestep == len(self.loads):
-            self.reset_timestep()
+            self.terminated = True
 
     def run_step(self, agent_gen_action: float):
         """run eletricity market in one timestep
@@ -141,6 +149,8 @@ class ElectricityMarket:
 
     def calc_gen_reward(self, res):
         """calculate reward for a generator
+
+        reward is price * quantity - cost
 
         Args:
             res (np.ndarray): market clearing result
@@ -323,7 +333,6 @@ class CarbonMarket:
         p_e_last = self.carbon_prices[-1]
 
         # assume we know the estimated total system emission
-
 
         # q_tilde_e_T is the estimated total system emission at time T
 
