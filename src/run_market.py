@@ -6,38 +6,62 @@ from tqdm import trange, tqdm
 
 from config import Config
 from gencon import GenCon
-from markets import ElectricityMarket
+from agent import RuleAgent
+from markets import ElectricityMarket, CarbonMarket
 
 
 # EM competitively, CM rule-based
 
 agent_gen_action = 1.0
 engine = matlab.engine.start_matlab()
-non_renrewable_gens = [
+non_renewable_gens = [
     GenCon(i, Config.gen_units[i], Config) for i in range(Config.n_gens)
 ]
 elec_market = ElectricityMarket(
     Config,
     engine,
 )
-emission_overall = np.zeros((48, 6))
-for day in trange(1):
+
+days = 5
+
+agent = RuleAgent()
+
+carb_market = CarbonMarket(Config)
+for day in trange(days):
     emission = np.zeros((48, 6))
     for t in trange(Config.n_timesteps):
         res = elec_market.run_step(agent_gen_action)
         qtys = res[:, elec_market.QTY_COL]
-        for i, gen in tqdm(enumerate((non_renrewable_gens))):
+        for i, gen in tqdm(enumerate((non_renewable_gens))):
             e = gen.calc_carbon_emission(qtys[i])
             emission[t, i] = e
             print(
                 f"day:{day} timestep: {elec_market.timestep} gen: {gen.gen_id}, emission: {e}"
             )
-    emission_overall[day * 48 : (day + 1) * 48, :] = emission
-np.savetxt(
-    f"{os.path.dirname(os.path.abspath(__file__))}/../data/emission.csv",
-    emission_overall,
-    delimiter=",",
-)
+
+    carb_market.set_gen_emission(np.sum(emission, axis=0))
+
+    prev_emission = carb_market.get_emission_record()
+
+    carbon_allowance_now = carb_market.get_allowance()
+
+    remaining_time = carb_market.get_remaining_time()
+
+    agent_action = agent.act(
+        prev_emission,
+        carbon_allowance_now,
+        remaining_time,
+    )
+    print(agent_gen_action)
+    info = carb_market.trade(agent_action[0], agent_action[1])
+    print(info)
+
+
+# np.savetxt(
+#     f"{os.path.dirname(os.path.abspath(__file__))}/../data/emission.csv",
+#     emission_overall,
+#     delimiter=",",
+# )
 
 
 # if __name__ == "__main__":

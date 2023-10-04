@@ -299,7 +299,7 @@ class CarbonMarket:
         "A hybrid interactive simulation method for studying emission trading behaviors"
         """
         T = self.n_trading_days
-        t = self.day_t
+        t = self.day_t + 1
 
         # initial free emission allowance allocation
         q_e0 = self.config.carbon_allowance_initial * self.config.n_gens
@@ -318,13 +318,19 @@ class CarbonMarket:
         """clear carbon price"""
 
         T = self.n_trading_days
-        t = self.day_t
+        t = self.day_t + 1
 
         p_e_last = self.carbon_prices[-1]
 
         # assume we know the estimated total system emission
 
-        q_tilde_e_T = T / (t - 1) * np.sum(self.gen_emissions)
+
+        # q_tilde_e_T is the estimated total system emission at time T
+
+        if t == 1:
+            q_tilde_e_T = T * np.sum(self.gen_emissions, axis=None)
+        else:
+            q_tilde_e_T = T / (t - 1) * np.sum(self.gen_emissions, axis=None)
 
         # overall supply of emission allowances set by regulator
         Q_e = self.config.carbon_allowance_initial * self.config.n_gens
@@ -352,22 +358,21 @@ class CarbonMarket:
 
     def trade(
         self,
-        gen_emissions: np.array,
         buying_volumes: np.array,
         selling_volumes: np.array,
     ):
         """trade emission allowances
 
         Args:
-            gen_emissions (np.array): emissions of each gen
             buying_volumes (np.array): buying volumes of each gen
             selling_volumes (np.array): selling volumes of each gen
         """
 
+        assert sum(self.gen_emissions[self.day_t]) > 0
+
         # set volumes & gen emission
         self.buying_volumes[self.day_t, :] = buying_volumes
         self.selling_volumes[self.day_t, :] = selling_volumes
-        self.gen_emissions[self.day_t, :] = gen_emissions
 
         # change price
         self.price_clearing()
@@ -375,7 +380,7 @@ class CarbonMarket:
         # change allowance
         carbon_allowance_last = self.carbon_allowance[-1]
         carbon_allowance_now = (
-            np.array(carbon_allowance_last) + self.buying_volumes - self.selling_volumes
+            np.array(carbon_allowance_last) + buying_volumes - selling_volumes
         )
 
         # trading days + 1
@@ -390,3 +395,21 @@ class CarbonMarket:
         }
 
         return info
+
+    def set_gen_emission(self, gen_emissions: np.array):
+        """set gen emission"""
+        self.gen_emissions[self.day_t] = gen_emissions
+
+    def get_emission_record(self):
+        """get previous emissions"""
+        if self.day_t == 0:
+            return self.gen_emissions[self.day_t]
+        return self.gen_emissions[: self.day_t]
+
+    def get_allowance(self):
+        """get allowance"""
+        return self.carbon_allowance[-1]
+
+    def get_remaining_time(self):
+        """get remaining time"""
+        return self.n_trading_days - self.day_t
