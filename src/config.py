@@ -51,6 +51,6 @@ class Config:
     carbon_price_initial = 10
 
     # TODO: check if this needs to be changed
-    # 2008 settings
-    price_alpha = 0.1649
-    price_beta = 3.8572
+    # settings in "A hybrid interactive simulation method for studying emission trading behaviors"
+    price_alpha = 10
+    price_beta = 2

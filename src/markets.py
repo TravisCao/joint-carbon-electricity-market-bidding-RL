@@ -264,9 +264,10 @@ class CarbonMarket:
         self.carbon_allowance = [
             config.carbon_allowance_initial for _ in range(config.n_gens)
         ]
-        self.gen_emissions = np.zeros((config.n_gens, config.n_trading_days))
-        self.selling_volumes = np.zeros((config.n_gens, config.n_trading_days))
-        self.buying_volumes = np.zeros((config.n_gens, config.n_trading_days))
+        self.gen_emissions = np.zeros((config.n_trading_days, config.n_gens))
+        self.selling_volumes = np.zeros((config.n_trading_days, config.n_gens))
+        self.buying_volumes = np.zeros((config.n_trading_days, config.n_gens))
+
         self.n_trading_days = config.n_trading_days
         self.day_t = 0
 
@@ -313,8 +314,40 @@ class CarbonMarket:
             (T - (t - 1)) / (t - 1) * overall_emission_now
         ) + q_e0
 
-    def price_clear(self):
+    def price_clearing(self):
         """clear carbon price"""
+
+        T = self.n_trading_days
+        t = self.day_t
 
         # TODO: gen emission needs changing
         p_e_last = self.carbon_prices[-1]
+
+        # assume we know the estimated total system emission
+
+        q_tilde_e_T = T / (t - 1) * np.sum(self.gen_emissions)
+
+        # overall supply of emission allowances set by regulator
+        Q_e = self.config.carbon_allowance_initial * self.config.n_gens
+
+        # long-term supply-demand balance
+        long_term_balance = t / T * (q_tilde_e_T - Q_e) / Q_e
+
+        # buying volume & selling volume last day
+
+        # TODO: change buying volume and selling volume when running the market
+        q_b_e_last = np.sum(self.buying_volumes[t - 1, :])
+        q_s_e_last = np.sum(self.selling_volumes[t - 1, :])
+
+        # short_term supply-demand balance
+        short_term_balance = (q_b_e_last - q_s_e_last) / (q_b_e_last + q_s_e_last)
+
+        p_e_now = (
+            p_e_last
+            + self.price_alpha * long_term_balance
+            + self.price_beta * short_term_balance
+        )
+
+        self.carbon_prices.append(p_e_now)
+
+        return p_e_now

@@ -4,8 +4,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-launch.json
-settings.json
+.vscode
 .DS_Store
 
 # C extensions
