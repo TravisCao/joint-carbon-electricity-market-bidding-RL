@@ -271,21 +271,34 @@ class CarbonMarket:
 
     def __init__(self, config: Config) -> None:
         self.config = config
-        self.carbon_prices = [config.carbon_price_initial]
-        self.carbon_allowance = [
-            np.ones(config.n_gens) * config.carbon_allowance_initial
-        ]
-        self.gen_emissions = np.zeros((config.n_trading_days, config.n_gens))
-        self.selling_volumes = np.zeros((config.n_trading_days, config.n_gens))
-        self.buying_volumes = np.zeros((config.n_trading_days, config.n_gens))
 
+        self.carbon_prices = None
+        self.carbon_allowance = None
+        self.gen_emissions = None
+        self.selling_volumes = None
+        self.buying_volumes = None
+
+        self.reset_system()
         self.n_trading_days = config.n_trading_days
         self.day_t = 0
 
         self.price_alpha = config.price_alpha
         self.price_beta = config.price_beta
+        self.penalty = config.carbon_penalty
 
         self.terminated = False
+
+    def reset_system(self):
+        self.reset_timestep()
+        self.carbon_prices = [self.config.carbon_price_initial]
+        self.carbon_allowance = [
+            np.ones(self.config.n_gens) * self.config.carbon_allowance_initial
+        ]
+        self.gen_emissions = np.zeros((self.config.n_trading_days, self.config.n_gens))
+        self.selling_volumes = np.zeros(
+            (self.config.n_trading_days, self.config.n_gens)
+        )
+        self.buying_volumes = np.zeros((self.config.n_trading_days, self.config.n_gens))
 
     @property
     def carbon_price_now(self) -> float:
@@ -329,9 +342,14 @@ class CarbonMarket:
 
     def increase_timestep(self):
         """increase day_t"""
+        if self.terminated:
+            self.reset_timestep()
         self.day_t += 1
-        if self.day_t == self.n_trading_days:
-            self.terminated = True
+
+    @property
+    def terminated(self):
+        # TODO: check
+        return self.day_t + 1 == self.n_trading_days
 
     def reset_timestep(self):
         """reset day_t"""
@@ -372,6 +390,11 @@ class CarbonMarket:
         allowance_now = self.get_allowance()
         remaining_time = self.get_remaining_time()
         return prev_emission, allowance_now, remaining_time
+
+    def calc_gen_reward(self, action, agent_gen_id):
+        # action[0] is buying, action[1] is selling
+        r = self.carbon_prices[-2] * (action[0][agent_gen_id] + action[1][agent_gen_id])
+        return r
 
     def price_clearing(self):
         """clear carbon price"""
@@ -414,6 +437,30 @@ class CarbonMarket:
 
         return p_e_now
 
+    def pay_compliance(self):
+        """pay compliance cost"""
+        cost = (
+            np.maximum(
+                self.carbon_allowance[-1] - np.sum(self.gen_emissions, axis=0), 0
+            )
+            * self.penalty
+        )
+        return cost
+
+    def run_step(self, action, gen_id):
+        # TODO: check
+        if self.terminated:
+            cost = self.pay_compliance()
+            info = self.get_rule_obs()
+            r = cost
+        else:
+            info = self.trade(action[0], action[1])
+            r = self.calc_gen_reward(action, gen_id)
+            obs = self.get_agent_obs(gen_id)
+        obs = self.get_agent_obs(gen_id)
+        terminated = self.terminated
+        return r, obs, terminated, info
+
     def trade(
         self,
         buying_volumes: np.array,
@@ -427,6 +474,8 @@ class CarbonMarket:
         """
 
         assert sum(self.gen_emissions[self.day_t]) > 0
+
+        assert not self.terminated
 
         # set volumes & gen emission
         self.buying_volumes[self.day_t, :] = buying_volumes

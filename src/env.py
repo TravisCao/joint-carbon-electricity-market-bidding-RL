@@ -24,3 +24,25 @@ class ElecMktEnv:
 
     def get_state(self):
         return self.market.get_state()
+
+
+# reinforcement learning env for carbon market
+class CarbMktEnv:
+    def __init__(self, config) -> None:
+        self.market = CarbonMarket(config)
+        self.gen_id = config.agent_gen_id
+
+    def reset(self):
+        self.market.reset_system()
+        return self.get_agent_state()
+
+    # implement step function
+    def step(
+        self,
+        action,
+    ):
+        r, obs, terminated, info = self.market.run_step(action, self.gen_id)
+        return (obs, r, terminated, info)
+
+    def get_agent_state(self):
+        return self.market.get_agent_obs(self.gen_id)

@@ -50,6 +50,8 @@ class Config:
     carbon_allowance_initial = 697815
     carbon_price_initial = 10
 
+    carbon_penalty = 1e8
+
     # TODO: check if this needs to be changed
     # settings in "A hybrid interactive simulation method for studying emission trading behaviors"
     price_alpha = 10
