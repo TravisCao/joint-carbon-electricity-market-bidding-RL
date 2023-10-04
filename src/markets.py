@@ -1,13 +1,3 @@
-"""
-Project: src
-File Created: Wednesday, 9th November 2022 10:57:53 am
-Author: Yuji Cao (travisyjcao@gmail.com)
------
-Last Modified: Wednesday, November 9th 2022, 12:34:45 pm
-Modified By: Yuji Cao
-"""
-
-import math
 from typing import Tuple, List
 
 import matlab.engine
@@ -16,11 +6,10 @@ import pandas as pd
 
 from config import Config
 from utils import get_logger
-from gencon import GenCon
 
-## electricity market
+
 class ElectricityMarket:
-    """electricity market"""
+    """Electricity market"""
 
     def __init__(
         self,
@@ -41,7 +30,6 @@ class ElectricityMarket:
 
         self.agent_gen_id = config.agent_gen_id
 
-        self.MAX_NEW_LOAD = config.MAX_NEW_LOAD
         self.WEIBUL_PAR = config.WEIBUL_PAR
         self.BETA_PAR1 = config.BETA_PAR1
         self.BETA_PAR2 = config.BETA_PAR2
@@ -64,6 +52,21 @@ class ElectricityMarket:
     def reset_timestep(self):
         """reset timestep"""
         self.timestep = 0
+
+    def reset(self):
+        self.reset_timestep()
+        return (
+            self.loads[self.timestep],
+            self.wind_gen_exps[self.timestep],
+            self.solar_gen_exps[self.timestep],
+        )
+
+    def get_state(self):
+        return (
+            self.loads[self.timestep],
+            self.wind_gen_exps[self.timestep],
+            self.solar_gen_exps[self.timestep],
+        )
 
     def increase_timestep(self):
         """increase timestep and reset"""
@@ -135,6 +138,20 @@ class ElectricityMarket:
             return
         else:
             return np.array(result["clear"])
+
+    def calc_gen_reward(self, res):
+        """calculate reward for a generator
+
+        Args:
+            res (np.ndarray): market clearing result
+
+        Returns:
+            float: reward
+        """
+        return (
+            res[self.agent_gen_id, self.QTY_COL] * res[self.agent_gen_id, self.PRC_COL]
+            - res[self.agent_gen_id, -1]
+        )
 
     def process_load_gen(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """scale load, renewable_gen
@@ -241,22 +258,63 @@ class CarbonMarket:
     Carbon market
     """
 
-    def __init__(self, config) -> None:
-
-        self.carbon_price = 0.0
-        self.carbon_quota = 0.0
+    def __init__(self, config: Config) -> None:
+        self.config = config
+        self.carbon_prices = [config.carbon_price_initial]
+        self.carbon_allowance = [
+            config.carbon_allowance_initial for _ in range(config.n_gens)
+        ]
+        self.gen_emissions = np.zeros((config.n_gens, config.n_trading_days))
+        self.selling_volumes = np.zeros((config.n_gens, config.n_trading_days))
+        self.buying_volumes = np.zeros((config.n_gens, config.n_trading_days))
+        self.n_trading_days = config.n_trading_days
         self.day_t = 0
 
+        self.price_alpha = config.price_alpha
+        self.price_beta = config.price_beta
 
-if __name__ == "__main__":
-    engine = matlab.engine.start_matlab()
-    non_renrewable_gens = [
-        GenCon(i, "non-renewable", Config.gen_units[i], Config)
-        for i in range(Config.n_gens)
-    ]
-    elec_market = ElectricityMarket(
-        Config,
-        engine,
-    )
-    res = elec_market.run_step(1.0)
-    elec_market.calc_carbon_emission(res)
+    @property
+    def carbon_price_now(self) -> float:
+        """current carbon price"""
+        return self.carbon_prices[-1]
+
+    @property
+    def emission_price_ratio(self) -> float:
+        """implement emission_price_ratio
+        in paper
+        "A hybrid interactive simulation method for studying emission trading behaviors"
+        """
+        recent_days_count = 7
+        if self.day_t < recent_days_count:
+            mean_prices_recent = np.mean(self.carbon_prices)
+        else:
+            mean_prices_recent = np.mean(self.carbon_prices[-recent_days_count:])
+        return (self.carbon_price_now - mean_prices_recent) / mean_prices_recent
+
+    @property
+    def compliance_urgency_ratio(self) -> float:
+        """implement compliance urgency ratio
+        in paper
+        "A hybrid interactive simulation method for studying emission trading behaviors"
+        """
+        T = self.n_trading_days
+        t = self.day_t
+
+        # initial free emission allowance allocation
+        q_e0 = self.config.carbon_allowance_initial * self.config.n_gens
+
+        overall_emission_now = np.sum(self.gen_emissions)
+
+        # TODO: check correctness
+        trading_vols_now = np.sum(
+            np.abs(self.selling_volumes - self.buying_volumes)[:t]
+        )
+        return ((T / (t - 1)) * overall_emission_now - trading_vols_now - q_e0) / (
+            (T - (t - 1)) / (t - 1) * overall_emission_now
+        ) + q_e0
+
+    def price_clear(self):
+        """clear carbon price"""
+
+        # TODO: gen emission needs changing
+        p_e_last = self.carbon_prices[-1]

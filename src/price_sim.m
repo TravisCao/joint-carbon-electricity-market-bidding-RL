@@ -5,13 +5,13 @@ function [result] = price_sim(load, sola_load, wind_load, max_new_load, offers_q
     mpc = loadcase('t_auction_case');
     mpc.bus(:, 3) = mpc.bus(:, 3) * load(1);
 
-
     mpopt = mpoption('verbose', 0, 'out.all', 0);
 %    mpopt = mpoption();
 
     mpc.bus(26, 2) = 2;
     mpc.bus(28, 2) = 2;
 
+% max_new_load is the P_max of renewable gens
     gen_26 = [26, 5, 0, 60, -15, 1, 100, 1, max_new_load, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
     gen_28 = [28, 5, 0, 60, -15, 1, 100, 1, max_new_load, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 %    display(size(mpc.gen(1, :)));
