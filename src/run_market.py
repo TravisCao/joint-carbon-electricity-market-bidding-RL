@@ -27,30 +27,24 @@ days = 5
 agent = RuleAgent()
 
 carb_market = CarbonMarket(Config)
-for day in trange(days):
+for day in range(days):
     emission = np.zeros((48, 6))
-    for t in trange(Config.n_timesteps):
+    # for t in trange(Config.n_timesteps):
+    for t in range(Config.n_timesteps):
         res = elec_market.run_step(agent_gen_action)
         qtys = res[:, elec_market.QTY_COL]
-        for i, gen in tqdm(enumerate((non_renewable_gens))):
-            e = gen.calc_carbon_emission(qtys[i])
-            emission[t, i] = e
-            print(
-                f"day:{day} timestep: {elec_market.timestep} gen: {gen.gen_id}, emission: {e}"
-            )
+        # for i, gen in tqdm(enumerate((non_renewable_gens))):
+        #     e = gen.calc_carbon_emission(qtys[i])
+        #     emission[t, i] = e
+        # print(
+        # f"day:{day} timestep: {elec_market.timestep} gen: {gen.gen_id}, emission: {e}"
+        # )
 
-    carb_market.set_gen_emission(np.sum(emission, axis=0))
-    prev_emission = carb_market.get_emission_record()
-    carbon_allowance_now = carb_market.get_allowance()
-    remaining_time = carb_market.get_remaining_time()
-    agent_action = agent.act(
-        prev_emission,
-        carbon_allowance_now,
-        remaining_time,
-    )
-    print(agent_gen_action)
-    info = carb_market.trade(agent_action[0], agent_action[1])
-    print(info)
+    # carb_market.set_gen_emission(np.sum(emission, axis=0))
+    # agent_action = agent.act(*carb_market.get_rule_obs())
+    # print(agent_gen_action)
+    # info = carb_market.trade(agent_action[0], agent_action[1])
+    # print(info)
 
 
 # np.savetxt(

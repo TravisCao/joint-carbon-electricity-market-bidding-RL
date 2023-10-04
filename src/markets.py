@@ -43,8 +43,6 @@ class ElectricityMarket:
 
         self.timestep = 0
 
-        self.terminated = False
-
         # column index in run result
         self.PRC_COL = 1
         self.QTY_COL = 0
@@ -54,7 +52,6 @@ class ElectricityMarket:
     def reset_timestep(self):
         """reset timestep"""
         self.timestep = 0
-        self.terminated = False
 
     def reset(self):
         self.reset_timestep()
@@ -76,11 +73,15 @@ class ElectricityMarket:
             ]
         )
 
+    @property
+    def terminated(self):
+        return self.timestep == len(self.loads)
+
     def increase_timestep(self):
         """increase timestep and reset"""
         self.timestep += 1
-        if self.timestep == len(self.loads):
-            self.terminated = True
+        if self.terminated:
+            self.reset_timestep()
 
     def run_step(self, agent_gen_action: float):
         """run eletricity market in one timestep
@@ -284,6 +285,8 @@ class CarbonMarket:
         self.price_alpha = config.price_alpha
         self.price_beta = config.price_beta
 
+        self.terminated = False
+
     @property
     def carbon_price_now(self) -> float:
         """current carbon price"""
@@ -323,6 +326,52 @@ class CarbonMarket:
         return ((T / (t - 1)) * overall_emission_now - trading_vols_now - q_e0) / (
             (T - (t - 1)) / (t - 1) * overall_emission_now
         ) + q_e0
+
+    def increase_timestep(self):
+        """increase day_t"""
+        self.day_t += 1
+        if self.day_t == self.n_trading_days:
+            self.terminated = True
+
+    def reset_timestep(self):
+        """reset day_t"""
+        self.day_t = 0
+        self.terminated = False
+
+    def get_agent_obs(self, gen_id):
+        """
+        potential info:
+        1. expected emission
+        2. expected carbon price trend
+        =>
+        the observation of agent shoule be:
+        1. total gen emission now
+        2. total system emission now
+        3. carbon price
+        4. carbon allowance
+        5. time remaining
+        """
+        # TODO: check
+        tot_gen_emission_now = np.sum(self.gen_emissions[: self.day_t, gen_id])
+        tot_system_emission_now = np.sum(self.gen_emissions, axis=None)
+        return np.array(
+            [
+                tot_gen_emission_now,
+                tot_system_emission_now,
+                self.carbon_prices[-1],
+                self.carbon_allowance[-1][gen_id],
+                self.n_trading_days - self.day_t - 1,
+            ]
+        )
+
+    def get_rule_obs(self):
+        """
+        get observation for rule-based agent
+        """
+        prev_emission = self.get_emission_record()
+        allowance_now = self.get_allowance()
+        remaining_time = self.get_remaining_time()
+        return prev_emission, allowance_now, remaining_time
 
     def price_clearing(self):
         """clear carbon price"""
