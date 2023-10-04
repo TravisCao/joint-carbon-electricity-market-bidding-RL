@@ -262,7 +262,7 @@ class CarbonMarket:
         self.config = config
         self.carbon_prices = [config.carbon_price_initial]
         self.carbon_allowance = [
-            config.carbon_allowance_initial for _ in range(config.n_gens)
+            np.ones(config.n_gens) * config.carbon_allowance_initial
         ]
         self.gen_emissions = np.zeros((config.n_trading_days, config.n_gens))
         self.selling_volumes = np.zeros((config.n_trading_days, config.n_gens))
@@ -320,7 +320,6 @@ class CarbonMarket:
         T = self.n_trading_days
         t = self.day_t
 
-        # TODO: gen emission needs changing
         p_e_last = self.carbon_prices[-1]
 
         # assume we know the estimated total system emission
@@ -335,7 +334,6 @@ class CarbonMarket:
 
         # buying volume & selling volume last day
 
-        # TODO: change buying volume and selling volume when running the market
         q_b_e_last = np.sum(self.buying_volumes[t - 1, :])
         q_s_e_last = np.sum(self.selling_volumes[t - 1, :])
 
@@ -351,3 +349,44 @@ class CarbonMarket:
         self.carbon_prices.append(p_e_now)
 
         return p_e_now
+
+    def trade(
+        self,
+        gen_emissions: np.array,
+        buying_volumes: np.array,
+        selling_volumes: np.array,
+    ):
+        """trade emission allowances
+
+        Args:
+            gen_emissions (np.array): emissions of each gen
+            buying_volumes (np.array): buying volumes of each gen
+            selling_volumes (np.array): selling volumes of each gen
+        """
+
+        # set volumes & gen emission
+        self.buying_volumes[self.day_t, :] = buying_volumes
+        self.selling_volumes[self.day_t, :] = selling_volumes
+        self.gen_emissions[self.day_t, :] = gen_emissions
+
+        # change price
+        self.price_clearing()
+
+        # change allowance
+        carbon_allowance_last = self.carbon_allowance[-1]
+        carbon_allowance_now = (
+            np.array(carbon_allowance_last) + self.buying_volumes - self.selling_volumes
+        )
+
+        # trading days + 1
+        self.day_t += 1
+
+        self.carbon_allowance.append(carbon_allowance_now)
+
+        info = {
+            "allowance": carbon_allowance_now,
+            "price": self.carbon_price_now,
+            "remaining_days": self.n_trading_days - self.day_t,
+        }
+
+        return info
