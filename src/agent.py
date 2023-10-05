@@ -7,6 +7,7 @@ class RuleAgent:
         pass
 
     def act(self, prev_emission, allowance, remaining_time):
+        # output all gencon buying selling volumes
         # Implement the agent's decision-making logic based on the observation
 
         # if prev_emission has two dimension, it means there are multiple generators

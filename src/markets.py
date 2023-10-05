@@ -286,8 +286,6 @@ class CarbonMarket:
         self.price_beta = config.price_beta
         self.penalty = config.carbon_penalty
 
-        self.terminated = False
-
     def reset_system(self):
         self.reset_timestep()
         self.carbon_prices = [self.config.carbon_price_initial]
@@ -354,7 +352,6 @@ class CarbonMarket:
     def reset_timestep(self):
         """reset day_t"""
         self.day_t = 0
-        self.terminated = False
 
     def get_agent_obs(self, gen_id):
         """
@@ -372,14 +369,12 @@ class CarbonMarket:
         # TODO: check
         tot_gen_emission_now = np.sum(self.gen_emissions[: self.day_t, gen_id])
         tot_system_emission_now = np.sum(self.gen_emissions, axis=None)
-        return np.array(
-            [
-                tot_gen_emission_now,
-                tot_system_emission_now,
-                self.carbon_prices[-1],
-                self.carbon_allowance[-1][gen_id],
-                self.n_trading_days - self.day_t - 1,
-            ]
+        return (
+            tot_gen_emission_now,
+            tot_system_emission_now,
+            self.carbon_prices[-1],
+            self.carbon_allowance[-1][gen_id],
+            self.n_trading_days - self.day_t - 1,
         )
 
     def get_rule_obs(self):
@@ -391,9 +386,13 @@ class CarbonMarket:
         remaining_time = self.get_remaining_time()
         return prev_emission, allowance_now, remaining_time
 
-    def calc_gen_reward(self, action, agent_gen_id):
+    def calc_agent_reward(self, action, agent_gen_id):
         # action[0] is buying, action[1] is selling
         r = self.carbon_prices[-2] * (action[0][agent_gen_id] + action[1][agent_gen_id])
+        return r
+
+    def calc_gen_reward(self, action):
+        r = self.carbon_prices[-2] * (action[0] + action[1])
         return r
 
     def price_clearing(self):
@@ -455,9 +454,21 @@ class CarbonMarket:
             r = cost
         else:
             info = self.trade(action[0], action[1])
-            r = self.calc_gen_reward(action, gen_id)
+            r = self.calc_agent_reward(action, gen_id)
             obs = self.get_agent_obs(gen_id)
         obs = self.get_agent_obs(gen_id)
+        terminated = self.terminated
+        return r, obs, terminated, info
+
+    def run_step_rule(self, action):
+        if self.terminated:
+            cost = self.pay_compliance()
+            info = self.get_rule_obs()
+            r = cost
+        else:
+            info = self.trade(action[0], action[1])
+            r = self.calc_gen_reward(action)
+        obs = self.get_rule_obs()
         terminated = self.terminated
         return r, obs, terminated, info
 

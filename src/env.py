@@ -36,13 +36,21 @@ class CarbMktEnv:
         self.market.reset_system()
         return self.get_agent_state()
 
+    def reset_rule(self):
+        self.market.reset_system()
+        return self.market.get_rule_obs()
+
+    def step_rule(self, action):
+        r, obs, terminated, info = self.market.run_step_rule(action)
+        return r, obs, terminated, info
+
     # implement step function
     def step(
         self,
         action,
     ):
         r, obs, terminated, info = self.market.run_step(action, self.gen_id)
-        return (obs, r, terminated, info)
+        return (r, obs, terminated, info)
 
     def get_agent_state(self):
         return self.market.get_agent_obs(self.gen_id)
