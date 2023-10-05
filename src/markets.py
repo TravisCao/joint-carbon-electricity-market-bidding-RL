@@ -88,7 +88,7 @@ class ElectricityMarket:
     def increase_timestep(self):
         """increase timestep and reset"""
         if self.last_timestep:
-            self.reset_timestep()
+            self.reset()
             return
         self.timestep += 1
 

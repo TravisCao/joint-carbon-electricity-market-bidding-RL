@@ -111,17 +111,15 @@ def evaluate(
                 actions.cpu().numpy().clip(Config.elec_act_low, Config.elec_act_high)
             )
 
-        next_obs, _, _, _, info = env.step(actions)
+        next_obs, _, _, _, infos = env.step(actions)
 
         # final_info means 1 day is finished
-        if "final_info" in info:
-            for i in info["final_info"]:
-                if "episode" not in info:
-                    continue
+        if "final_info" in infos[0]:
+            for info in infos:
                 print(
-                    f"eval_day={len(episodic_returns)}, episodic_return={info['episode']['r']}"
+                    f"eval_day={len(episodic_returns)}, episodic_return={info['final_info']['r']}"
                 )
-                episodic_returns += [info["episode"]["r"]]
+                episodic_returns += [info["final_info"]["r"]]
         obs = next_obs
     print(
         f"sum of episodic_returns={sum(episodic_returns)}, mean of episodic_returns={np.mean(episodic_returns)}"
@@ -248,6 +246,7 @@ if __name__ == "__main__":
         Config.elec_obs_space,
         Config.elec_act_space,
         device,
+        n_envs=Config.num_mkt,
         handle_timeout_termination=False,
     )
     start_time = time.time()
@@ -259,38 +258,43 @@ if __name__ == "__main__":
     for global_step in range(args.total_timesteps):
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
-            action = Config.elec_act_space.sample()
+            actions = np.array(
+                [Config.elec_act_space.sample() for _ in range(Config.num_mkt)]
+            )
             LOG.info("warm up")
         else:
             with torch.no_grad():
-                action = actor(torch.Tensor(obs).to(device))
-                action += torch.normal(0, actor.action_scale * args.exploration_noise)
-                action = (
-                    action.cpu().numpy().clip(Config.elec_act_low, Config.elec_act_high)
+                actions = actor(torch.Tensor(obs).to(device))
+                actions += torch.normal(0, actor.action_scale * args.exploration_noise)
+                actions = (
+                    actions.cpu()
+                    .numpy()
+                    .clip(Config.elec_act_low, Config.elec_act_high)
                 )
 
-        LOG.info("action: %s", action)
+        LOG.info("action: %s", actions)
         # TRY NOT TO MODIFY: execute the game and log data.
         # next_obs, rewards, terminateds, truncateds, infos = envs.step(actions)
-        next_obs, r, terminated, info = env.step(action)
+        next_obs, rewards, terminateds, infos = env.step(actions)
 
         LOG.info("next obs: %s", next_obs)
-        LOG.info("r: %s", r)
-        LOG.info("timestep: %s", env.market.timestep)
-        LOG.info("terminated: %s", terminated)
+        LOG.info("r: %s", rewards)
+        LOG.info("timestep: %s", env.mkts[0].timestep)
+        LOG.info("terminated: %s", terminateds)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
 
-        if "final_info" in info:
-            print(
-                f"global_step={global_step}, episodic_return={info['final_info']['r']}"
-            )
-            writer.add_scalar(
-                "charts/episodic_return", info["final_info"]["r"], global_step
-            )
-            writer.add_scalar(
-                "charts/episodic_length", info["final_info"]["l"], global_step
-            )
+        if "final_info" in infos[0]:
+            for info in infos:
+                print(
+                    f"global_step={global_step}, episodic_return={info['final_info']['r']}"
+                )
+                writer.add_scalar(
+                    "charts/episodic_return", info["final_info"]["r"], global_step
+                )
+                writer.add_scalar(
+                    "charts/episodic_length", info["final_info"]["l"], global_step
+                )
             # for i in info["final_info"]:
             #     print(f"global_step={global_step}, episodic_return={i['episode']['r']}")
             #     writer.add_scalar(
@@ -301,7 +305,7 @@ if __name__ == "__main__":
             #     )
             #     break
 
-        rb.add(obs, next_obs, action, r, terminated, info)
+        rb.add(obs, next_obs, actions, rewards, terminateds, infos)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
         obs = next_obs
@@ -377,8 +381,8 @@ if __name__ == "__main__":
             device=device,
             exploration_noise=args.exploration_noise,
         )
-        for idx, r in enumerate(episode_r):
-            writer.add_scalar("eval/episodic_r", r, idx)
+        for idx, rewards in enumerate(episode_r):
+            writer.add_scalar("eval/episodic_r", rewards, idx)
 
     # if args.upload_model:
     #     from cleanrl_utils.huggingface import push_to_hub
@@ -394,5 +398,5 @@ if __name__ == "__main__":
     #         f"videos/{run_name}-eval",
     #     )
 
-    # env.close()
+    env.close()
     writer.close()
