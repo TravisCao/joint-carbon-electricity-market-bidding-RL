@@ -253,7 +253,7 @@ if __name__ == "__main__":
 
     # TRY NOT TO MODIFY: start the game
     obs = env.reset()
-    LOG.info("reset obs: %s", obs)
+    LOG.debug("reset obs: %s", obs)
 
     for global_step in range(args.total_timesteps):
         # ALGO LOGIC: put action logic here
@@ -261,7 +261,7 @@ if __name__ == "__main__":
             actions = np.array(
                 [Config.elec_act_space.sample() for _ in range(Config.num_mkt)]
             )
-            LOG.info("warm up")
+            LOG.debug("warm up")
         else:
             with torch.no_grad():
                 actions = actor(torch.Tensor(obs).to(device))
@@ -277,10 +277,10 @@ if __name__ == "__main__":
         # next_obs, rewards, terminateds, truncateds, infos = envs.step(actions)
         next_obs, rewards, terminateds, infos = env.step(actions)
 
-        LOG.info("next obs: %s", next_obs)
+        LOG.debug("next obs: %s", next_obs)
         LOG.info("r: %s", rewards)
-        LOG.info("timestep: %s", env.mkts[0].timestep)
-        LOG.info("terminated: %s", terminateds)
+        LOG.debug("timestep: %s", env.mkts[0].timestep)
+        LOG.debug("terminated: %s", terminateds)
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
 
@@ -350,12 +350,12 @@ if __name__ == "__main__":
 
             if global_step % 100 == 0:
                 LOG.info("update")
-                LOG.info("losses/qf1_loss %s, %s", qf1_loss.item(), global_step)
-                LOG.info("losses/actor_loss %s, %s", actor_loss.item(), global_step)
-                LOG.info(
+                LOG.debug("losses/qf1_loss %s, %s", qf1_loss.item(), global_step)
+                LOG.debug("losses/actor_loss %s, %s", actor_loss.item(), global_step)
+                LOG.debug(
                     "losses/qf1_values %s, %s", qf1_a_values.mean().item(), global_step
                 )
-                LOG.info("SPS: %s", int(global_step / (time.time() - start_time)))
+                LOG.debug("SPS: %s", int(global_step / (time.time() - start_time)))
                 writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
                 writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
                 writer.add_scalar(

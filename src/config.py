@@ -25,7 +25,7 @@ class Config:
 
     n_timesteps = 48
 
-    num_mkt = 50
+    num_mkt = 11
 
     PRC_COL = 1
     QTY_COL = 0
@@ -78,8 +78,6 @@ class Config:
     carb_act_dim = None
 
     reward_scale = 3e-3
-
-    num_mkt = 10
 
     # ddpg args
     # seed = 1

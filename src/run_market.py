@@ -82,6 +82,7 @@ from env import ElecMktEnv, CarbMktEnv
 from config import Config
 import matlab.engine
 from markets import ElectricityMarket, CarbonMarket
+from env import ElecMktEnv, CarbMktEnv
 import numpy as np
 
 engine = matlab.engine.start_matlab()
@@ -90,19 +91,19 @@ elec_market = ElectricityMarket(
     engine,
 )
 
-# mkts = [ElectricityMarket(Config, engine) for _ in range(10)]
-# tmp = []
-# actions = np.ones((10, 1))
-# for i, mkt in enumerate(mkts):
-#     tmp += [mkt.get_run_step_input(actions[i])]
-# len(tmp)
-
-from env import ElecMktEnv, CarbMktEnv
-
-elec_mkt_env = ElecMktEnv(Config, engine)
+config = Config
+config.num_mkt = 21
+elec_mkt_env = ElecMktEnv(config, engine)
 
 elec_obs = elec_mkt_env.reset()
-elec_mkt_env.step(np.ones(10))
+actions = np.arange(100, 201, 5) / 100.0
+for i in range(48):
+    print(i)
+    obs_list, rewards, terminateds, infos = elec_mkt_env.step(actions)
+    print(rewards)
+    if "final_info" in infos[0]:
+        for info in infos:
+            print(info["final_info"]["r"])
 
 # EM competitively, CM rule-based
 
@@ -172,33 +173,69 @@ elec_mkt_env.step(np.ones(10))
 #     if terminated:
 #         break
 
-from config import Config
-import matlab.engine
-from markets import ElectricityMarket, CarbonMarket
-import numpy as np
+# from config import Config
+# import matlab.engine
+# from markets import ElectricityMarket, CarbonMarket
+# import numpy as np
 
-engine = matlab.engine.start_matlab()
-elec_market = ElectricityMarket(
-    Config,
-    engine,
-)
+# engine = matlab.engine.start_matlab()
+# elec_market = ElectricityMarket(
+#     Config,
+#     engine,
+# )
+
+# # mkts = [ElectricityMarket(Config, engine) for _ in range(10)]
+# # tmp = []
+# # actions = np.ones((10, 1))
+# # for i, mkt in enumerate(mkts):
+# #     tmp += [mkt.get_run_step_input(actions[i])]
+# # len(tmp)
+
 
 # mkts = [ElectricityMarket(Config, engine) for _ in range(10)]
-# tmp = []
-# actions = np.ones((10, 1))
+# run_step_inputs = []
+# actions = np.ones(10)
 # for i, mkt in enumerate(mkts):
-#     tmp += [mkt.get_run_step_input(actions[i])]
-# len(tmp)
+#     run_step_inputs += [mkt.get_run_step_input(actions[i])]
+
+# winds, solars, loads, offer_qtys, offer_prcs = list(zip(*run_step_inputs))
+# max_new_loads = [Config.MAX_NEW_LOAD for i in range(len(actions))]
+
+# # save to mat
+
+# # matlab.double(loads), matlab.double(solars), matlab.double(winds), matlab.double(max_new_loads), matlab.double(offers_qtys), matlab.double(offer_prcs)
+# save to mat file
+# from scipy.io import loadmat, savemat
+
+# mdict = {
+#     "loads": matlab.double(loads),
+#     "solars": matlab.double(solars),
+#     "winds": matlab.double(winds),
+#     "max_new_loads": matlab.double(max_new_loads),
+#     "offer_qtys": matlab.double(offer_qtys),
+#     "offer_prcs": matlab.double(offer_prcs),
+# }
+# savemat("value.mat", mdict)
 
 
-mkts = [ElectricityMarket(Config, engine) for _ in range(10)]
-run_step_inputs = []
-actions = np.ones(10)
-for i, mkt in enumerate(mkts):
-    run_step_inputs += [mkt.get_run_step_input(actions[i])]
+# results = engine.multi_price_sim(
+#     matlab.double(loads),
+#     matlab.double(solars),
+#     matlab.double(winds),
+#     matlab.double(max_new_loads),
+#     matlab.double(offer_qtys),
+#     matlab.double(offer_prcs),
+# )
 
-winds, solars, loads, offer_qtys, offer_prcs = list(zip(*run_step_inputs))
-max_new_loads = [Config.MAX_NEW_LOAD for i in range(len(actions))]
+
+# mkts = [ElectricityMarket(Config, engine) for _ in range(10)]
+# run_step_inputs = []
+# actions = np.ones(10)
+# for i, mkt in enumerate(mkts):
+#     run_step_inputs += [mkt.get_run_step_input(actions[i])]
+
+# winds, solars, loads, offer_qtys, offer_prcs = list(zip(*run_step_inputs))
+# max_new_loads = [Config.MAX_NEW_LOAD for i in range(len(actions))]
 
 # save to mat
 
@@ -217,47 +254,11 @@ max_new_loads = [Config.MAX_NEW_LOAD for i in range(len(actions))]
 # savemat("value.mat", mdict)
 
 
-results = engine.multi_price_sim(
-    matlab.double(loads),
-    matlab.double(solars),
-    matlab.double(winds),
-    matlab.double(max_new_loads),
-    matlab.double(offer_qtys),
-    matlab.double(offer_prcs),
-)
-
-
-mkts = [ElectricityMarket(Config, engine) for _ in range(10)]
-run_step_inputs = []
-actions = np.ones(10)
-for i, mkt in enumerate(mkts):
-    run_step_inputs += [mkt.get_run_step_input(actions[i])]
-
-winds, solars, loads, offer_qtys, offer_prcs = list(zip(*run_step_inputs))
-max_new_loads = [Config.MAX_NEW_LOAD for i in range(len(actions))]
-
-# save to mat
-
-# matlab.double(loads), matlab.double(solars), matlab.double(winds), matlab.double(max_new_loads), matlab.double(offers_qtys), matlab.double(offer_prcs)
-# save to mat file
-# from scipy.io import loadmat, savemat
-
-# mdict = {
-#     "loads": matlab.double(loads),
-#     "solars": matlab.double(solars),
-#     "winds": matlab.double(winds),
-#     "max_new_loads": matlab.double(max_new_loads),
-#     "offer_qtys": matlab.double(offer_qtys),
-#     "offer_prcs": matlab.double(offer_prcs),
-# }
-# savemat("value.mat", mdict)
-
-
-results = engine.multi_price_sim(
-    matlab.double(loads),
-    matlab.double(solars),
-    matlab.double(winds),
-    matlab.double(max_new_loads),
-    matlab.double(offer_qtys),
-    matlab.double(offer_prcs),
-)
+# results = engine.multi_price_sim(
+#     matlab.double(loads),
+#     matlab.double(solars),
+#     matlab.double(winds),
+#     matlab.double(max_new_loads),
+#     matlab.double(offer_qtys),
+#     matlab.double(offer_prcs),
+# )

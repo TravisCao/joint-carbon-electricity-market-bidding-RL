@@ -58,14 +58,7 @@ class ElectricityMarket:
     def reset(self):
         self.rewards = []
         self.reset_timestep()
-        return np.array(
-            [
-                self.loads[self.timestep],
-                self.wind_gen_exps[self.timestep],
-                self.solar_gen_exps[self.timestep],
-                self.timestep,
-            ]
-        )
+        return self.get_state()
 
     def get_state(self):
         return np.array(
@@ -73,7 +66,8 @@ class ElectricityMarket:
                 self.loads[self.timestep],
                 self.wind_gen_exps[self.timestep],
                 self.solar_gen_exps[self.timestep],
-                self.timestep,
+                # for numerical stability
+                self.timestep / self.config.n_timesteps,
             ]
         )
 
@@ -141,15 +135,15 @@ class ElectricityMarket:
         return obs, r, self.terminated, info
 
     def step_no_run(self, res):
-        self.increase_timestep()
         r = self.calc_gen_reward(res)
         self.rewards += [r]
         obs = self.get_state()
         info = {}
-        if self.terminated:
+        if self.last_timestep:
             info["final_info"] = {}
             info["final_info"]["r"] = sum(self.rewards)
             info["final_info"]["l"] = self.config.n_timesteps
+        self.increase_timestep()
         return obs, r, self.terminated, info
 
     def _run_step(

@@ -26,6 +26,7 @@ class ElecMktEnv:
 
     # implement step function
     def step(self, actions):
+        assert len(actions) == len(self.mkts)
         # get multiple run step input from each mkt
         run_step_inputs = []
         for i, mkt in enumerate(self.mkts):
@@ -46,7 +47,7 @@ class ElecMktEnv:
         terminateds = np.zeros(self.num_mkt)
         infos = []
         for i, mkt in enumerate(self.mkts):
-            obs, r, terminated, info = mkt.step_no_run(np.array(results[i]['clear']))
+            obs, r, terminated, info = mkt.step_no_run(np.array(results[i]["clear"]))
             obs_list[i] = obs
             rewards[i] = r
             terminateds[i] = terminated

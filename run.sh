@@ -7,7 +7,7 @@ python src/ddpg.py --exp-name "EM-test-multi" \
                 --tau 0.005 \
                 --batch-size 256 \
                 --exploration-noise 0.1 \
-                --learning-starts 10000 \
+                --learning-starts 1000 \
                 --policy-frequency 2 \
                 --noise-clip 0.5
 
