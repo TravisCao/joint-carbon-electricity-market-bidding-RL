@@ -72,6 +72,8 @@ class Config:
     carb_obs_dim = None
     carb_act_dim = None
 
+    reward_scale = 3e-3
+
     # ddpg args
     # seed = 1
     # torch_deterministic = False

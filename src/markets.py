@@ -180,10 +180,11 @@ class ElectricityMarket:
         Returns:
             float: reward
         """
-        return (
+        r = (
             res[self.agent_gen_id, self.QTY_COL] * res[self.agent_gen_id, self.PRC_COL]
             - res[self.agent_gen_id, -1]
         )
+        return r * self.config.reward_scale
 
     def process_load_gen(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """scale load, renewable_gen
