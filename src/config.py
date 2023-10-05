@@ -25,6 +25,11 @@ class Config:
 
     n_timesteps = 48
 
+    num_mkt = 10
+
+    PRC_COL = 1
+    QTY_COL = 0
+
     gen_units = ["KS_Jeffrey Energy Center_unit2_Coal_P733" for _ in range(n_gens)]
 
     gencost_coef = np.array(
@@ -73,6 +78,8 @@ class Config:
     carb_act_dim = None
 
     reward_scale = 3e-3
+
+    num_mkt = 10
 
     # ddpg args
     # seed = 1

@@ -19,3 +19,22 @@ def get_logger():
     c_handler.setFormatter(c_format)
     LOG.addHandler(c_handler)
     return LOG
+
+
+def calc_gen_reward(res, config):
+    """calculate reward for a generator
+
+    reward is price * quantity - cost
+
+    Args:
+        res (np.ndarray): market clearing result
+
+    Returns:
+        float: reward
+    """
+    r = (
+        res[config.agent_gen_id, config.QTY_COL]
+        * res[config.agent_gen_id, config.PRC_COL]
+        - res[config.agent_gen_id, -1]
+    )
+    return r * config.reward_scale

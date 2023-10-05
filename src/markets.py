@@ -92,18 +92,7 @@ class ElectricityMarket:
             return
         self.timestep += 1
 
-    def run_step(self, agent_gen_action: float):
-        """run eletricity market in one timestep
-
-        Args:
-            agent_gen_action (float): gen action coef (bidding strategy)
-
-        Returns:
-            result (np.ndarray): market clearing result of agent_gen_id
-                                col 0: quantity
-                                col 1: price
-                                col 2: cost
-        """
+    def get_run_step_input(self, agent_gen_action: float):
         load_step = self.loads[self.timestep]
         wind_exp_step = self.wind_gen_exps[self.timestep]
         solar_exp_step = self.solar_gen_exps[self.timestep]
@@ -116,16 +105,43 @@ class ElectricityMarket:
         offers_qty, offers_prc, qty_prc_pairs = self.generate_piecewise_price(
             self.gencost_coef, agent_gen_action
         )
+        offers_qty = offers_qty.tolist()
+        offers_prc = offers_prc.tolist()
+        return wind_gen1_step, solar_gen_step, load_step, offers_qty, offers_prc
 
-        result = self._run_step(
-            wind_gen1_step, solar_gen_step, load_step, offers_qty, offers_prc
-        )
+    def run_step(self, agent_gen_action: float):
+        """run eletricity market in one timestep
+
+        Args:
+            agent_gen_action (float): gen action coef (bidding strategy)
+
+        Returns:
+            result (np.ndarray): market clearing result of agent_gen_id
+                                col 0: quantity
+                                col 1: price
+                                col 2: cost
+        """
+
+        run_step_input = self.get_run_step_input(agent_gen_action)
+        result = self._run_step(*run_step_input)
 
         self.increase_timestep()
         return result
 
     def step(self, action):
         res = self.run_step(agent_gen_action=action)
+        r = self.calc_gen_reward(res)
+        self.rewards += [r]
+        obs = self.get_state()
+        info = {}
+        if self.terminated:
+            info["final_info"] = {}
+            info["final_info"]["r"] = sum(self.rewards)
+            info["final_info"]["l"] = self.config.n_timesteps
+        return obs, r, self.terminated, info
+
+    def step_no_run(self, res):
+        self.increase_timestep()
         r = self.calc_gen_reward(res)
         self.rewards += [r]
         obs = self.get_state()
@@ -159,8 +175,8 @@ class ElectricityMarket:
             matlab.double([solar]),
             matlab.double([wind]),
             matlab.double([self.MAX_NEW_LOAD]),
-            matlab.double(offers_qty.tolist()),
-            matlab.double(offers_prc.tolist()),
+            matlab.double(offers_qty),
+            matlab.double(offers_prc),
         )
 
         if not result["success"]:

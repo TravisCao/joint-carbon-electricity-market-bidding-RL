@@ -1,5 +1,8 @@
 import numpy as np
-from markets import CarbonMarket, Config
+from config import Config
+from markets import CarbonMarket, ElectricityMarket
+import numpy as np
+import matlab.engine
 
 
 def test_get_agent_obs():
@@ -42,4 +45,41 @@ def test_get_agent_obs():
     assert obs[4] == carbon_market.n_trading_days - carbon_market.day_t - 1
 
 
-test_get_agent_obs()
+def test_multi_price_sim():
+    engine = matlab.engine.start_matlab()
+    # Create multiple ElectricityMarket instances
+    market1 = ElectricityMarket(Config, engine)
+    market2 = ElectricityMarket(Config, engine)
+    market3 = ElectricityMarket(Config, engine)
+
+    # Generate test data
+    loads = np.array([[100, 200, 300], [400, 500, 600], [700, 800, 900]])
+    sola_loads = np.array([50, 100, 150])
+    wind_loads = np.array([20, 30, 40])
+    max_new_loads = np.array([50, 100, 150])
+    offers_qtys = np.array([[10, 20, 30], [40, 50, 60], [70, 80, 90]])
+    offers_prcs = np.array([[20, 30, 40], [50, 60, 70], [80, 90, 100]])
+
+    # Call multi_price_sim function
+    results = multi_price_sim(
+        loads, sola_loads, wind_loads, max_new_loads, offers_qtys, offers_prcs
+    )
+
+    # Verify results
+    assert len(results) == 3
+    assert len(results[0]) == 3
+    assert len(results[1]) == 3
+    assert len(results[2]) == 3
+    assert isinstance(results[0][0], float)
+    assert isinstance(results[0][1], float)
+    assert isinstance(results[0][2], float)
+    assert isinstance(results[1][0], float)
+    assert isinstance(results[1][1], float)
+    assert isinstance(results[1][2], float)
+    assert isinstance(results[2][0], float)
+    assert isinstance(results[2][1], float)
+    assert isinstance(results[2][2], float)
+
+
+if __name__ == "__main__":
+    test_multi_price_sim()
