@@ -60,6 +60,7 @@ class ElectricityMarket:
                 self.loads[self.timestep],
                 self.wind_gen_exps[self.timestep],
                 self.solar_gen_exps[self.timestep],
+                self.timestep,
             ]
         )
 

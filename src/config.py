@@ -1,5 +1,6 @@
 import numpy as np
 import os
+import gymnasium as gym
 
 
 class Config:
@@ -56,3 +57,19 @@ class Config:
     # settings in "A hybrid interactive simulation method for studying emission trading behaviors"
     price_alpha = 10
     price_beta = 2
+
+    elec_obs_dim = 4
+    elec_act_dim = 1
+
+    elec_obs_space = gym.spaces.Box(
+        low=0, high=np.inf, shape=(elec_obs_dim,), dtype=np.float32
+    )
+    elec_act_space = gym.spaces.Box(low=1.0, high=2.0, dtype=np.float32)
+
+    elec_act_high = 2.0
+    elec_act_low = 2.0
+
+    carb_obs_dim = None
+    carb_act_dim = None
+
+    # ddpg
