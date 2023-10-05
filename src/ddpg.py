@@ -37,11 +37,11 @@ def parse_args():
         help="the wandb's project name")
     parser.add_argument("--wandb-entity", type=str, default=None,
         help="the entity (team) of wandb's project")
-    parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
-        help="whether to capture videos of the agent performances (check out `videos` folder)")
+    # parser.add_argument("--capture-video", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    #     help="whether to capture videos of the agent performances (check out `videos` folder)")
     parser.add_argument("--save-model", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="whether to save model into the `runs/{run_name}` folder")
-    parser.add_argument("--upload-model", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--upload-model", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=False,
         help="whether to upload the saved model to huggingface")
     parser.add_argument("--hf-entity", type=str, default="",
         help="the user or org name of the model repository from the Hugging Face Hub")
@@ -95,28 +95,37 @@ def evaluate(
     actor.eval()
     qf.load_state_dict(qf_params)
     qf.eval()
+
     # note: qf is not used in this script
 
+    # run 100 days
+    # here we record the episodic return of each day
+    # in total 100 days
     obs = env.reset()
-    episode_r = []
-    with torch.no_grad():
-        actions = actor(torch.Tensor(obs).to(device))
-        actions += torch.normal(0, actor.action_scale * exploration_noise)
-        actions = actions.cpu().numpy().clip(Config.elec_act_low, Config.elec_act_high)
+    episodic_returns = []
+    if len(episodic_returns) < Config.n_trading_days:
+        with torch.no_grad():
+            actions = actor(torch.Tensor(obs).to(device))
+            actions += torch.normal(0, actor.action_scale * exploration_noise)
+            actions = (
+                actions.cpu().numpy().clip(Config.elec_act_low, Config.elec_act_high)
+            )
 
-    next_obs, r, _, _, infos = env.step(actions)
+        next_obs, _, _, _, info = env.step(actions)
 
-    # if "final_info" in infos:
-    #     for info in infos["final_info"]:
-    #         if "episode" not in info:
-    #             continue
-    #         print(
-    #             f"eval_episode={len(episodic_returns)}, episodic_return={info['episode']['r']}"
-    #         )
-    #         episodic_returns += [info["episode"]["r"]]
-    episode_r += [r]
-    obs = next_obs
-
+        # final_info means 1 day is finished
+        if "final_info" in info:
+            for i in info["final_info"]:
+                if "episode" not in info:
+                    continue
+                print(
+                    f"eval_day={len(episodic_returns)}, episodic_return={info['episode']['r']}"
+                )
+                episodic_returns += [info["episode"]["r"]]
+        obs = next_obs
+    print(
+        f"sum of episodic_returns={sum(episodic_returns)}, mean of episodic_returns={np.mean(episodic_returns)}"
+    )
     return episode_r
 
 
@@ -188,12 +197,13 @@ if __name__ == "__main__":
             monitor_gym=True,
             save_code=True,
         )
-    # writer = SummaryWriter(f"runs/{run_name}")
-    # writer.add_text(
-    #     "hyperparameters",
-    #     "|param|value|\n|-|-|\n%s"
-    #     % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
-    # )
+
+    writer = SummaryWriter(f"runs/{run_name}")
+    writer.add_text(
+        "hyperparameters",
+        "|param|value|\n|-|-|\n%s"
+        % ("\n".join([f"|{key}|{value}|" for key, value in vars(args).items()])),
+    )
 
     # TRY NOT TO MODIFY: seeding
     random.seed(args.seed)
@@ -250,7 +260,7 @@ if __name__ == "__main__":
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
             action = Config.elec_act_space.sample()
-            LOG.info("warm up: %s", "")
+            LOG.info("warm up")
         else:
             with torch.no_grad():
                 action = actor(torch.Tensor(obs).to(device))
@@ -271,24 +281,26 @@ if __name__ == "__main__":
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
 
-        # if "final_info" in info:
-        #     for info in info["final_info"]:
-        #         print(
-        #             f"global_step={global_step}, episodic_return={info['episode']['r']}"
-        #         )
-        #         writer.add_scalar(
-        #             "charts/episodic_return", info["episode"]["r"], global_step
-        #         )
-        #         writer.add_scalar(
-        #             "charts/episodic_length", info["episode"]["l"], global_step
-        #         )
-        #         break
+        if "final_info" in info:
+            print(
+                f"global_step={global_step}, episodic_return={info['final_info']['r']}"
+            )
+            writer.add_scalar(
+                "charts/episodic_return", info["final_info"]["r"], global_step
+            )
+            writer.add_scalar(
+                "charts/episodic_length", info["final_info"]["l"], global_step
+            )
+            # for i in info["final_info"]:
+            #     print(f"global_step={global_step}, episodic_return={i['episode']['r']}")
+            #     writer.add_scalar(
+            #         "charts/episodic_return", i["episode"]["r"], global_step
+            #     )
+            #     writer.add_scalar(
+            #         "charts/episodic_length", i["episode"]["l"], global_step
+            #     )
+            #     break
 
-        # TRY NOT TO MODIFY: save data to replay buffer; handle `terminal_observation`
-        # real_next_obs = next_obs.copy()
-        # for idx, d in enumerate(truncateds):
-        #     if d:
-        #         real_next_obs[idx] = infos["final_observation"][idx]
         rb.add(obs, next_obs, action, r, terminated, info)
 
         # TRY NOT TO MODIFY: CRUCIAL step easy to overlook
@@ -331,42 +343,42 @@ if __name__ == "__main__":
                     target_param.data.copy_(
                         args.tau * param.data + (1 - args.tau) * target_param.data
                     )
-            LOG.info("update")
-            LOG.info("losses/qf1_loss %s, %s", qf1_loss.item(), global_step)
-            LOG.info("losses/actor_loss %s, %s", actor_loss.item(), global_step)
-            LOG.info(
-                "losses/qf1_values %s, %s", qf1_a_values.mean().item(), global_step
-            )
-            LOG.info("SPS: %s", int(global_step / (time.time() - start_time)))
 
-            # if global_step % 100 == 0:
-            #     writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
-            #     writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
-            #     writer.add_scalar(
-            #         "losses/qf1_values", qf1_a_values.mean().item(), global_step
-            #     )
-            #     print("SPS:", int(global_step / (time.time() - start_time)))
-            #     writer.add_scalar(
-            #         "charts/SPS",
-            #         int(global_step / (time.time() - start_time)),
-            #         global_step,
-            #     )
+            if global_step % 100 == 0:
+                LOG.info("update")
+                LOG.info("losses/qf1_loss %s, %s", qf1_loss.item(), global_step)
+                LOG.info("losses/actor_loss %s, %s", actor_loss.item(), global_step)
+                LOG.info(
+                    "losses/qf1_values %s, %s", qf1_a_values.mean().item(), global_step
+                )
+                LOG.info("SPS: %s", int(global_step / (time.time() - start_time)))
+                writer.add_scalar("losses/qf1_loss", qf1_loss.item(), global_step)
+                writer.add_scalar("losses/actor_loss", actor_loss.item(), global_step)
+                writer.add_scalar(
+                    "losses/qf1_values", qf1_a_values.mean().item(), global_step
+                )
+                print("SPS:", int(global_step / (time.time() - start_time)))
+                writer.add_scalar(
+                    "charts/SPS",
+                    int(global_step / (time.time() - start_time)),
+                    global_step,
+                )
 
-    # if args.save_model:
-    #     model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
-    #     torch.save((actor.state_dict(), qf1.state_dict()), model_path)
-    #     print(f"model saved to {model_path}")
+    if args.save_model:
+        model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
+        torch.save((actor.state_dict(), qf1.state_dict()), model_path)
+        print(f"model saved to {model_path}")
 
-    #     episode_r = evaluate(
-    #         model_path,
-    #         env,
-    #         engine,
-    #         Model=(Actor, QNetwork),
-    #         device=device,
-    #         exploration_noise=args.exploration_noise,
-    #     )
-    #     for idx, r in enumerate(episode_r):
-    #         writer.add_scalar("eval/episodic_r", r, idx)
+        episode_r = evaluate(
+            model_path,
+            env,
+            engine,
+            Model=(Actor, QNetwork),
+            device=device,
+            exploration_noise=args.exploration_noise,
+        )
+        for idx, r in enumerate(episode_r):
+            writer.add_scalar("eval/episodic_r", r, idx)
 
     # if args.upload_model:
     #     from cleanrl_utils.huggingface import push_to_hub
@@ -383,4 +395,4 @@ if __name__ == "__main__":
     #     )
 
     # env.close()
-    # writer.close()
+    writer.close()

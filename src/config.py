@@ -72,4 +72,12 @@ class Config:
     carb_obs_dim = None
     carb_act_dim = None
 
-    # ddpg
+    # ddpg args
+    # seed = 1
+    # torch_deterministic = False
+    # cuda = True
+    # track = True
+    # wandb_project_name = "MARL-joint-carbon-electricity-market"
+
+    # save_model = True
+    # upload_model = False

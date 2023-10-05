@@ -11,10 +11,10 @@ def get_logger():
         logging.Logger: logger
     """
     LOG = logging.getLogger(os.path.basename(__file__))
-    LOG.setLevel(logging.DEBUG)
+    LOG.setLevel(logging.INFO)
 
     c_handler = logging.StreamHandler()
-    c_handler.setLevel(logging.DEBUG)
+    c_handler.setLevel(logging.INFO)
     c_format = logging.Formatter("%(name)s - %(levelname)s: %(message)s")
     c_handler.setFormatter(c_format)
     LOG.addHandler(c_handler)

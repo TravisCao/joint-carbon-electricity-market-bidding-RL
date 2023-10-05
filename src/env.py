@@ -8,6 +8,7 @@ from markets import ElectricityMarket, CarbonMarket
 # use gym env as a template
 class ElecMktEnv:
     def __init__(self, config, engine) -> None:
+        self.engine = engine
         self.market = ElectricityMarket(config, engine)
 
     def reset(self):
@@ -15,15 +16,13 @@ class ElecMktEnv:
 
     # implement step function
     def step(self, action):
-        res = self.market.run_step(action)
-        r = self.market.calc_gen_reward(res)
-        obs = self.market.get_state()
-        terminated = self.market.terminated
-        info = None
-        return (obs, r, terminated, info)
+        return self.market.step(action)
 
     def get_state(self):
         return self.market.get_state()
+
+    def close(self):
+        self.engine.quit()
 
 
 # reinforcement learning env for carbon market

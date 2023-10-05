@@ -47,6 +47,8 @@ class ElectricityMarket:
         self.PRC_COL = 1
         self.QTY_COL = 0
 
+        self.rewards = []
+
         self.LOG = get_logger()
 
     def reset_timestep(self):
@@ -54,6 +56,7 @@ class ElectricityMarket:
         self.timestep = 0
 
     def reset(self):
+        self.rewards = []
         self.reset_timestep()
         return np.array(
             [
@@ -75,14 +78,19 @@ class ElectricityMarket:
         )
 
     @property
+    def last_timestep(self):
+        return self.timestep == self.config.n_timesteps - 1
+
+    @property
     def terminated(self):
-        return self.timestep == len(self.loads)
+        return self.timestep == 0
 
     def increase_timestep(self):
         """increase timestep and reset"""
-        self.timestep += 1
-        if self.terminated:
+        if self.last_timestep:
             self.reset_timestep()
+            return
+        self.timestep += 1
 
     def run_step(self, agent_gen_action: float):
         """run eletricity market in one timestep
@@ -115,6 +123,18 @@ class ElectricityMarket:
 
         self.increase_timestep()
         return result
+
+    def step(self, action):
+        res = self.run_step(agent_gen_action=action)
+        r = self.calc_gen_reward(res)
+        self.rewards += [r]
+        obs = self.get_state()
+        info = {}
+        if self.terminated:
+            info["final_info"] = {}
+            info["final_info"]["r"] = sum(self.rewards)
+            info["final_info"]["l"] = self.config.n_timesteps
+        return obs, r, self.terminated, info
 
     def _run_step(
         self,
