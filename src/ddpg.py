@@ -75,25 +75,25 @@ def parse_args():
 
 
 def evaluate(
-    model_path: str,
+    # model_path: str,
     env,
-    engine,
-    Model: nn.Module,
+    actor,
+    qf,
     device: torch.device = torch.device("cpu"),
     exploration_noise: float = 0.1,
 ):
-    env = ElecMktEnv(Config, engine)
-    actor = Model[0](
-        Config.elec_obs_dim,
-        Config.elec_act_dim,
-        Config.elec_act_high,
-        Config.elec_act_low,
-    ).to(device)
-    qf = Model[1](Config.elec_obs_dim, Config.elec_act_dim).to(device)
-    actor_params, qf_params = torch.load(model_path, map_location=device)
-    actor.load_state_dict(actor_params)
+    assert len(env.mkts) == 1
+    # actor = Model[0](
+    #     Config.elec_obs_dim,
+    #     Config.elec_act_dim,
+    #     Config.elec_act_high,
+    #     Config.elec_act_low,
+    # ).to(device)
+    # qf = Model[1](Config.elec_obs_dim, Config.elec_act_dim).to(device)
+    # actor_params, qf_params = torch.load(model_path, map_location=device)
+    # actor.load_state_dict(actor_params)
     actor.eval()
-    qf.load_state_dict(qf_params)
+    # qf.load_state_dict(qf_params)
     qf.eval()
 
     # note: qf is not used in this script
@@ -102,8 +102,9 @@ def evaluate(
     # here we record the episodic return of each day
     # in total 100 days
     obs = env.reset()
-    episodic_returns = []
-    if len(episodic_returns) < Config.n_trading_days:
+    episodic_returns = 0
+    while 1:
+        # if len(episodic_returns) < Config.n_trading_days:
         with torch.no_grad():
             actions = actor(torch.Tensor(obs).to(device))
             actions += torch.normal(0, actor.action_scale * exploration_noise)
@@ -111,20 +112,19 @@ def evaluate(
                 actions.cpu().numpy().clip(Config.elec_act_low, Config.elec_act_high)
             )
 
-        next_obs, _, _, _, infos = env.step(actions)
+        next_obs, _, _, infos = env.step(actions)
 
         # final_info means 1 day is finished
         if "final_info" in infos[0]:
             for info in infos:
-                print(
-                    f"eval_day={len(episodic_returns)}, episodic_return={info['final_info']['r']}"
-                )
-                episodic_returns += [info["final_info"]["r"]]
+                # print(
+                #     f"eval_day={len(episodic_returns)}, episodic_return={info['final_info']['r']}"
+                # )
+                episodic_returns += info["final_info"]["r"]
+            break
         obs = next_obs
-    print(
-        f"sum of episodic_returns={sum(episodic_returns)}, mean of episodic_returns={np.mean(episodic_returns)}"
-    )
-    return episode_r
+    print(f"episodic_returns={episodic_returns}")
+    return episodic_returns
 
 
 # ALGO LOGIC: initialize agent here:
@@ -211,16 +211,7 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-    # env setup
-    # envs = gym.vector.SyncVectorEnv(
-    #     [make_env(args.env_id, args.seed, 0, args.capture_video, run_name)]
-    # )
-
     env = ElecMktEnv(Config, engine)
-
-    # assert isinstance(
-    #     envs.single_action_space, gym.spaces.Box
-    # ), "only continuous action space is supported"
 
     actor = Actor(
         Config.elec_obs_dim,
@@ -249,13 +240,30 @@ if __name__ == "__main__":
         n_envs=Config.num_mkt,
         handle_timeout_termination=False,
     )
-    start_time = time.time()
 
+    eval_config = Config()
+    eval_config.num_mkt = 1
+    eval_env = ElecMktEnv(eval_config, engine)
+    episode_r = evaluate(
+        eval_env,
+        actor,
+        qf1,
+        device=device,
+        exploration_noise=args.exploration_noise,
+    )
+    actor.train()
+    qf1.train()
+    writer.add_scalar("eval/episodic_r", episode_r, 0)
+
+    eval_episodic_r_best = episode_r
+
+    start_time = time.time()
     # TRY NOT TO MODIFY: start the game
     obs = env.reset()
     LOG.debug("reset obs: %s", obs)
 
     for global_step in range(args.total_timesteps):
+        print(f"global_step: {global_step}")
         # ALGO LOGIC: put action logic here
         if global_step < args.learning_starts:
             actions = np.array(
@@ -272,13 +280,13 @@ if __name__ == "__main__":
                     .clip(Config.elec_act_low, Config.elec_act_high)
                 )
 
-        LOG.info("action: %s", actions)
+        # LOG.info("action: %s", actions.tolist())
         # TRY NOT TO MODIFY: execute the game and log data.
         # next_obs, rewards, terminateds, truncateds, infos = envs.step(actions)
         next_obs, rewards, terminateds, infos = env.step(actions)
 
         LOG.debug("next obs: %s", next_obs)
-        LOG.info("r: %s", rewards)
+        # LOG.info("r: %s", rewards.tolist())
         LOG.debug("timestep: %s", env.mkts[0].timestep)
         LOG.debug("terminated: %s", terminateds)
 
@@ -348,8 +356,8 @@ if __name__ == "__main__":
                         args.tau * param.data + (1 - args.tau) * target_param.data
                     )
 
-            if global_step % 100 == 0:
-                LOG.info("update")
+            if global_step % 20 == 0:
+                print("update")
                 LOG.debug("losses/qf1_loss %s, %s", qf1_loss.item(), global_step)
                 LOG.debug("losses/actor_loss %s, %s", actor_loss.item(), global_step)
                 LOG.debug(
@@ -368,21 +376,41 @@ if __name__ == "__main__":
                     global_step,
                 )
 
-    if args.save_model:
-        model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
-        torch.save((actor.state_dict(), qf1.state_dict()), model_path)
-        print(f"model saved to {model_path}")
+            if args.save_model:
+                # model_path = f"runs/{run_name}/{args.exp_name}.cleanrl_model"
+                eval_config = Config()
+                eval_config.num_mkt = 1
+                eval_env = ElecMktEnv(eval_config, engine)
+                episode_r = evaluate(
+                    eval_env,
+                    actor,
+                    qf1,
+                    device=device,
+                    exploration_noise=args.exploration_noise,
+                )
+                if episode_r > eval_episodic_r_best:
+                    eval_episodic_r_best = episode_r
+                    path = f"runs/{run_name}/{args.exp_name}.cleanrl_model_best_{episode_r:.3f}"
+                    torch.save((actor.state_dict(), qf1.state_dict()), path)
+                    print(f"current best: {episode_r}. model saved to {path}")
+                writer.add_scalar("eval/episodic_r", episode_r, global_step)
+                actor.train()
+                qf1.train()
 
-        episode_r = evaluate(
-            model_path,
-            env,
-            engine,
-            Model=(Actor, QNetwork),
-            device=device,
-            exploration_noise=args.exploration_noise,
-        )
-        for idx, rewards in enumerate(episode_r):
-            writer.add_scalar("eval/episodic_r", rewards, idx)
+    # if args.save_model:
+    #     torch.save((actor.state_dict(), qf1.state_dict()), model_path)
+    #     print(f"model saved to {model_path}")
+
+    #     episode_r = evaluate(
+    #         model_path,
+    #         env,
+    #         engine,
+    #         Model=(Actor, QNetwork),
+    #         device=device,
+    #         exploration_noise=args.exploration_noise,
+    #     )
+    #     for idx, rewards in enumerate(episode_r):
+    #         writer.add_scalar("eval/episodic_r", rewards, idx)
 
     # if args.upload_model:
     #     from cleanrl_utils.huggingface import push_to_hub
