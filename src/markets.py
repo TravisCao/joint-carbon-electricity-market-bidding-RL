@@ -132,7 +132,7 @@ class ElectricityMarket:
         if self.terminated:
             info["final_info"] = {}
             info["final_info"]["r"] = sum(self.rewards)
-            info["final_info"]["l"] = self.config.n_timesteps
+            # info["final_info"]["l"] = self.config.n_timesteps
         return obs, r, self.terminated, info
 
     def step_no_run(self, res):

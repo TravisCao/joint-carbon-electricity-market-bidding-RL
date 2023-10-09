@@ -13,6 +13,7 @@ from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
 from env import ElecMktEnv, CarbMktEnv
 from config import Config
+import matlab.engine
 
 
 def parse_args(jupyter=False):
@@ -38,12 +39,13 @@ def parse_args(jupyter=False):
     # Algorithm specific arguments
     parser.add_argument("--env-id", type=str, default="ElecMkt-v0",
         help="the id of the environment")
-    # parser.add_argument("--total-timesteps", type=int, default=1000000,
-    parser.add_argument("--total-timesteps", type=int, default=Config.total_timesteps,
+    parser.add_argument("--total-timesteps", type=int, default=1000000,
+    # parser.add_argument("--total-timesteps", type=int, default=Config.total_timesteps,
         help="total timesteps of the experiments")
     parser.add_argument("--learning-rate", type=float, default=3e-4,
         help="the learning rate of the optimizer")
-    parser.add_argument("--num-envs", type=int, default=Config.num_mkt,
+    # parser.add_argument("--num-envs", type=int, default=Config.num_mkt,
+    parser.add_argument("--num-envs", type=int, default=50,
         help="the number of parallel game environments")
     # parser.add_argument("--num-steps", type=int, default=2048,
     parser.add_argument("--num-steps", type=int, default=Config.n_timesteps,
@@ -72,6 +74,8 @@ def parse_args(jupyter=False):
         help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None,
         help="the target KL divergence threshold")
+    parser.add_argument("--save-model", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+        help="whether to save model into the `runs/{run_name}` folder")
     if jupyter:
         args = parser.parse_args(args=[])
     else:
@@ -82,42 +86,12 @@ def parse_args(jupyter=False):
     return args
 
 
-# def make_env(env_id, idx, capture_video, run_name, gamma):
-#     def thunk():
-#         if capture_video:
-#             env = gym.make(env_id, render_mode="rgb_array")
-#         else:
-#             env = gym.make(env_id)
-#         env = gym.wrappers.FlattenObservation(
-#             env
-#         )  # deal with dm_control's Dict observation space
-#         env = gym.wrappers.RecordEpisodeStatistics(env)
-#         if capture_video:
-#             if idx == 0:
-#                 env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
-#         env = gym.wrappers.ClipAction(env)
-#         env = gym.wrappers.NormalizeObservation(env)
-#         env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
-#         env = gym.wrappers.NormalizeReward(env, gamma=gamma)
-#         env = gym.wrappers.TransformReward(env, lambda reward: np.clip(reward, -10, 10))
-#         return env
-
-#     return thunk
-
-
-def make_env(env_id, idx, capture_video, run_name, gamma):
-    # def thunk():
-    if capture_video:
-        env = gym.make(env_id, render_mode="rgb_array")
-    else:
-        env = gym.make(env_id)
+def make_env(env_id, gamma, config=Config, engine=None):
+    env = gym.make(env_id, config=config, engine=engine)
     # env = gym.wrappers.FlattenObservation(
     # env
     # )  # deal with dm_control's Dict observation space
     env = gym.wrappers.RecordEpisodeStatistics(env)
-    if capture_video:
-        if idx == 0:
-            env = gym.wrappers.RecordVideo(env, f"videos/{run_name}")
     env = gym.wrappers.ClipAction(env)
     env = gym.wrappers.NormalizeObservation(env)
     env = gym.wrappers.TransformObservation(env, lambda obs: np.clip(obs, -10, 10))
@@ -126,9 +100,37 @@ def make_env(env_id, idx, capture_video, run_name, gamma):
     return env
 
 
-# make_env("ElecMkt-v0", 0, False, "test", 0.99)
+def evaluate(
+    env,
+    agent,
+    device: torch.device = torch.device("cpu"),
+):
+    assert len(env.mkts) == 1
+    agent.eval()
 
-# return thunk
+    obs_eval, _ = env.reset()
+    episodic_returns = 0
+    while 1:
+        # if len(episodic_returns) < Config.n_trading_days:
+        with torch.no_grad():
+            action_eval = agent.get_action_mean(torch.Tensor(obs_eval).to(device))
+
+        next_obs_eval, _, _, _, info_eval = env.step(
+            action_eval.cpu().numpy().flatten()
+        )
+
+        # final_info means 1 day is finished
+        if "final_info" in info_eval:
+            episodic_returns += info_eval["episode"]["r"][0]
+            # for info_eval in infos:
+            # print(
+            #     f"eval_day={len(episodic_returns)}, episodic_return={info['final_info']['r']}"
+            # )
+            # episodic_returns += info["episode"]["r"]
+            break
+        obs_eval = next_obs_eval
+    print(f"episodic_returns={episodic_returns}")
+    return episodic_returns
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
@@ -175,10 +177,20 @@ class Agent(nn.Module):
             self.critic(x),
         )
 
+    def get_action_mean(self, x):
+        action_mean = self.actor_mean(x)
+        return action_mean
+
 
 if __name__ == "__main__":
-    jupyter = True
+    jupyter = False
+    engine = matlab.engine.start_matlab()
     args = parse_args(jupyter)
+
+    # eval env
+    config_eval = Config()
+    config_eval.num_mkt = 1
+    env_eval = make_env(args.env_id, args.gamma, config_eval, engine)
 
     run_name = f"{args.env_id}__{args.exp_name}__{args.seed}__{int(time.time())}"
     if args.track:
@@ -208,15 +220,9 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-    # # env setup
-    # envs = gym.vector.SyncVectorEnv(
-    #     [
-    #         make_env(args.env_id, i, args.capture_video, run_name, args.gamma)
-    #         for i in range(args.num_envs)
-    #     ]
-    # )
-
-    envs = make_env(args.env_id, 0, args.capture_video, run_name, args.gamma)
+    config = Config()
+    config.num_mkt = args.num_envs
+    envs = make_env(args.env_id, args.gamma, config, engine=engine)
     assert isinstance(
         envs.action_space, gym.spaces.Box
     ), "only continuous action space is supported"
@@ -235,6 +241,12 @@ if __name__ == "__main__":
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
     values = torch.zeros((args.num_steps, args.num_envs)).to(device)
+
+    episode_r = evaluate(env_eval, agent, device=device)
+    agent.train()
+    writer.add_scalar("eval/episodic_r", episode_r, 0)
+
+    eval_episodic_r_best = episode_r
 
     # TRY NOT TO MODIFY: start the game
     global_step = 0
@@ -392,6 +404,16 @@ if __name__ == "__main__":
         y_pred, y_true = b_values.cpu().numpy(), b_returns.cpu().numpy()
         var_y = np.var(y_true)
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
+
+        if args.save_model:
+            episode_r = evaluate(env_eval, agent, device=device)
+            if episode_r > eval_episodic_r_best:
+                eval_episodic_r_best = episode_r
+                path = f"runs/{run_name}/{args.exp_name}.cleanrl_model_best_{episode_r:.3f}"
+                torch.save(agent.state_dict(), path)
+                print(f"current best: {episode_r}. model saved to {path}")
+            writer.add_scalar("eval/episodic_r", episode_r, global_step)
+            agent.train()
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
         writer.add_scalar(
