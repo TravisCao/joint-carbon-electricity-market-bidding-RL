@@ -68,7 +68,8 @@ class ElectricityMarket:
                 self.solar_gen_exps[self.timestep],
                 # for numerical stability
                 self.timestep / self.config.n_timesteps,
-            ]
+            ],
+            dtype=np.float32,
         )
 
     @property
@@ -141,8 +142,9 @@ class ElectricityMarket:
         info = {}
         if self.last_timestep:
             info["final_info"] = {}
-            info["final_info"]["r"] = sum(self.rewards)
-            info["final_info"]["l"] = self.config.n_timesteps
+            info["final_info"]["episode"] = {}
+            info["final_info"]["episode"]["r"] = sum(self.rewards)
+            # info["final_info"]["episode"]["l"] = self.config.n_timesteps
         self.increase_timestep()
         return obs, r, self.terminated, info
 

@@ -107,33 +107,33 @@ for i in range(48):
 
 # EM competitively, CM rule-based
 
-# agent_gen_action = 1.0
-# engine = matlab.engine.start_matlab()
-# non_renewable_gens = [
-#     GenCon(i, Config.gen_units[i], Config) for i in range(Config.n_gens)
-# ]
-# elec_market = ElectricityMarket(
-#     Config,
-#     engine,
-# )
+agent_gen_action = 1.0
+engine = matlab.engine.start_matlab()
+non_renewable_gens = [
+    GenCon(i, Config.gen_units[i], Config) for i in range(Config.n_gens)
+]
+elec_market = ElectricityMarket(
+    Config,
+    engine,
+)
 
-# days = 5
+days = 5
 
-# agent = RuleAgent()
+agent = RuleAgent()
 
-# carb_market = CarbonMarket(Config)
-# for day in range(days):
-#     emission = np.zeros((48, 6))
-#     # for t in trange(Config.n_timesteps):
-#     for t in range(Config.n_timesteps):
-#         res = elec_market.run_step(agent_gen_action)
-#         qtys = res[:, elec_market.QTY_COL]
-# for i, gen in tqdm(enumerate((non_renewable_gens))):
-#     e = gen.calc_carbon_emission(qtys[i])
-#     emission[t, i] = e
-# print(
-# f"day:{day} timestep: {elec_market.timestep} gen: {gen.gen_id}, emission: {e}"
-# )
+carb_market = CarbonMarket(Config)
+for day in range(days):
+    emission = np.zeros((24, 6))
+    print("day", day)
+    # for t in trange(Config.n_timesteps):
+    for t in range(Config.n_timesteps):
+        print("t", t)
+        res = elec_market.run_step(agent_gen_action)
+        qtys = res[:, elec_market.QTY_COL]
+for i, gen in tqdm(enumerate((non_renewable_gens))):
+    e = gen.calc_carbon_emission(qtys[i])
+    emission[t, i] = e
+print(f"day:{day} timestep: {elec_market.timestep} gen: {gen.gen_id}, emission: {e}")
 
 # carb_market.set_gen_emission(np.sum(emission, axis=0))
 # agent_action = agent.act(*carb_market.get_rule_obs())

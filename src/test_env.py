@@ -34,4 +34,11 @@ def test_elec_mkt_env():
     assert isinstance(state, np.ndarray)
 
 
-test_elec_mkt_env()
+def test_elec_mkt_env_gym():
+    from ppo import make_env
+
+    env = make_env("ElecMkt-v0", 0, False, "test", 0.99)
+    next_obs, _ = env.reset()
+
+
+test_elec_mkt_env_gym()

@@ -29,23 +29,26 @@ class ElecMktEnv(gym.Env):
         self.engine = engine
         self.config = config
         self.num_mkt = config.num_mkt
+        self.num_envs = config.num_mkt
+        self.is_vector_env = True
 
         self.mkts = [ElectricityMarket(config, engine) for _ in range(self.num_mkt)]
-        self.action_space = spaces.Box(
-            low=1.0, high=2.0, shape=(self.num_mkt,), dtype=np.float32
-        )
+        self.action_space = spaces.Box(low=1.0, high=2.0, dtype=np.float32)
         self.observation_space = spaces.Box(
             low=0,
             high=np.inf,
-            shape=(self.num_mkt, self.config.elec_obs_dim),
+            shape=(self.config.elec_obs_dim,),
             dtype=np.float32,
         )
+        self.single_observation_space = self.observation_space
+        self.single_action_space = self.action_space
 
-    def reset(self):
+    def reset(self, seed=None, options=None):
         obs = np.zeros((self.num_mkt, self.config.elec_obs_dim))
+        info = {}
         for i, mkt in enumerate(self.mkts):
             obs[i] = mkt.reset()
-        return obs
+        return obs, info
 
     # implement step function
     def step(self, actions):
@@ -65,17 +68,21 @@ class ElecMktEnv(gym.Env):
             matlab.double(offer_qtys),
             matlab.double(offer_prcs),
         )
-        obs_list = np.zeros((self.num_mkt, self.config.elec_obs_dim))
-        rewards = np.zeros(self.num_mkt)
-        terminateds = np.zeros(self.num_mkt)
+        obs_list = np.zeros((self.num_mkt, self.config.elec_obs_dim), dtype=np.float32)
+        rewards = np.zeros(self.num_mkt, dtype=np.float32)
+        terminations = np.zeros(self.num_mkt, dtype=np.bool)
         infos = []
         for i, mkt in enumerate(self.mkts):
             obs, r, terminated, info = mkt.step_no_run(np.array(results[i]["clear"]))
             obs_list[i] = obs
             rewards[i] = r
-            terminateds[i] = terminated
+            terminations[i] = terminated
             infos.append(info)
-        return obs_list, rewards, terminateds, infos
+
+        infos = {k: [d[k] for d in infos] for k in infos[0]}
+
+        truncated = np.zeros(self.num_mkt, dtype=np.bool)
+        return obs_list, rewards, terminations, truncated, infos
 
     def get_state(self):
         obs_list = np.zeros((self.num_mkt, self.config.elec_obs_dim))
