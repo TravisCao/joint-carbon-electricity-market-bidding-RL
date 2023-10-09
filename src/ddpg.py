@@ -43,8 +43,8 @@ def parse_args():
         help="whether to save model into the `runs/{run_name}` folder")
     parser.add_argument("--upload-model", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=False,
         help="whether to upload the saved model to huggingface")
-    parser.add_argument("--hf-entity", type=str, default="",
-        help="the user or org name of the model repository from the Hugging Face Hub")
+    # parser.add_argument("--hf-entity", type=str, default="",
+        # help="the user or org name of the model repository from the Hugging Face Hub")
 
     # Algorithm specific arguments
     parser.add_argument("--env-id", type=str, default="HalfCheetah-v4",

@@ -2,20 +2,44 @@ from gencon import GenCon
 from utils import calc_gen_reward
 import numpy as np
 import matlab.engine
+from config import Config
 
 # import markets
 from markets import ElectricityMarket, CarbonMarket
 
+import gymnasium as gym
+from gymnasium import spaces
+from gymnasium.envs.registration import register
+
+register(
+    id="ElecMkt-v0",
+    entry_point="env:ElecMktEnv",
+)
+
+
 # reinforcment learning env for electricity market
 # use gym env as a template
-class ElecMktEnv:
-    def __init__(self, config, engine) -> None:
-        self.engine = engine
+class ElecMktEnv(gym.Env):
+    def __init__(self, config=None, engine=None) -> None:
+        if config is None:
+            config = Config
+        if engine is None:
+            engine = matlab.engine.start_matlab()
 
-        self.num_mkt = config.num_mkt
+        self.engine = engine
         self.config = config
+        self.num_mkt = config.num_mkt
 
         self.mkts = [ElectricityMarket(config, engine) for _ in range(self.num_mkt)]
+        self.action_space = spaces.Box(
+            low=1.0, high=2.0, shape=(self.num_mkt,), dtype=np.float32
+        )
+        self.observation_space = spaces.Box(
+            low=0,
+            high=np.inf,
+            shape=(self.num_mkt, self.config.elec_obs_dim),
+            dtype=np.float32,
+        )
 
     def reset(self):
         obs = np.zeros((self.num_mkt, self.config.elec_obs_dim))
