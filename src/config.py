@@ -23,7 +23,7 @@ class Config:
     # max gen for non-renewable gens
     gmax = 60
 
-    n_timesteps = 48
+    n_timesteps = 24
 
     num_mkt = 50
 
@@ -45,8 +45,8 @@ class Config:
 
     # data
     config_file_path = os.path.dirname(os.path.abspath(__file__))
-    load_data_path = f"{config_file_path}/../data/load.txt"
-    renew_data_path = f"{config_file_path}/../data/30min.txt"
+    load_data_path = f"{config_file_path}/../data/load-1h.txt"
+    renew_data_path = f"{config_file_path}/../data/1h.txt"
     cems_data_path = f"{config_file_path}/../data/cems_coef.csv"
 
     # carbon market
