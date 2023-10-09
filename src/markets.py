@@ -401,7 +401,9 @@ class CarbonMarket:
         5. time remaining
         """
         # TODO: check
-        tot_gen_emission_now = np.sum(self.gen_emissions[: self.day_t, gen_id])
+        tot_gen_emission_now = np.sum(
+            self.gen_emissions[: self.day_t, gen_id], dtype=np.float32
+        )
         tot_system_emission_now = np.sum(self.gen_emissions, axis=None)
         return (
             tot_gen_emission_now,

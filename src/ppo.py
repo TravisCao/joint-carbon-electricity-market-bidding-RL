@@ -29,7 +29,7 @@ def parse_args(jupyter=False):
         help="if toggled, cuda will be enabled by default")
     parser.add_argument("--track", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
         help="if toggled, this experiment will be tracked with Weights and Biases")
-    parser.add_argument("--wandb-project-name", type=str, default="cleanRL",
+    parser.add_argument("--wandb-project-name", type=str, default="RL",
         help="the wandb's project name")
     parser.add_argument("--wandb-entity", type=str, default=None,
         help="the entity (team) of wandb's project")
@@ -409,7 +409,7 @@ if __name__ == "__main__":
             episode_r = evaluate(env_eval, agent, device=device)
             if episode_r > eval_episodic_r_best:
                 eval_episodic_r_best = episode_r
-                path = f"runs/{run_name}/{args.exp_name}.cleanrl_model_best_{episode_r:.3f}"
+                path = f"runs/{run_name}/{args.exp_name}.rl_model_best_{episode_r:.3f}"
                 torch.save(agent.state_dict(), path)
                 print(f"current best: {episode_r}. model saved to {path}")
             writer.add_scalar("eval/episodic_r", episode_r, global_step)

@@ -95,10 +95,14 @@ class ElecMktEnv(gym.Env):
 
 
 # reinforcement learning env for carbon market
-class CarbMktEnv:
-    def __init__(self, config) -> None:
+class CarbMktEnv(gym.Env):
+    def __init__(self, config=None) -> None:
         self.market = CarbonMarket(config)
         self.gen_id = config.agent_gen_id
+
+        self.observation_space = gym.spaces.Box(
+            low=0, high=np.inf, shape=(5,), dtype=np.float32
+        )
 
     def reset(self):
         self.market.reset_system()
