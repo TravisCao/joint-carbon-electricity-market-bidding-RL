@@ -5,15 +5,16 @@ import time
 from distutils.util import strtobool
 
 import gymnasium as gym
+import matlab.engine
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
-from env import ElecMktEnv, CarbMktEnv
+
 from config import Config
-import matlab.engine
+from env import CarbMktEnv, ElecMktEnv
 
 
 def parse_args(jupyter=False):

@@ -1,28 +1,30 @@
-from gencon import GenCon
-from utils import calc_gen_reward
-import numpy as np
-import matlab.engine
-from config import Config
-
-# import markets
-from markets import ElectricityMarket, CarbonMarket
-
 import gymnasium as gym
+import matlab.engine
+import numpy as np
 from gymnasium import spaces
 from gymnasium.envs.registration import register
+
+from config import Config
+from gencon import GenCon
+
+# import markets
+from markets import CarbonMarket, ElectricityMarket
 
 register(
     id="ElecMkt-v0",
     entry_point="env:ElecMktEnv",
 )
 
+register(
+    id="CarbMkt-v0",
+    entry_point="env:CarbMktEnv",
+)
+
 
 # reinforcment learning env for electricity market
 # use gym env as a template
 class ElecMktEnv(gym.Env):
-    def __init__(self, config=None, engine=None) -> None:
-        if config is None:
-            config = Config
+    def __init__(self, config=Config, engine=None) -> None:
         if engine is None:
             engine = matlab.engine.start_matlab()
 
@@ -96,7 +98,7 @@ class ElecMktEnv(gym.Env):
 
 # reinforcement learning env for carbon market
 class CarbMktEnv(gym.Env):
-    def __init__(self, config=None) -> None:
+    def __init__(self, config=Config) -> None:
         self.market = CarbonMarket(config)
         self.gen_id = config.agent_gen_id
 
@@ -104,25 +106,25 @@ class CarbMktEnv(gym.Env):
             low=0, high=np.inf, shape=(5,), dtype=np.float32
         )
 
-    def reset(self):
-        self.market.reset_system()
-        return self.get_agent_state()
+        self.action_space = gym.spaces.Box(
+            low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32
+        )
 
-    def reset_rule(self):
+    def reset(self, seed=None, options=None):
         self.market.reset_system()
-        return self.market.get_rule_obs()
-
-    def step_rule(self, action):
-        r, obs, terminated, info = self.market.run_step_rule(action)
-        return r, obs, terminated, info
+        info = {}
+        return self.get_agent_state(), info
 
     # implement step function
     def step(
         self,
-        action,
+        action=None,
     ):
-        r, obs, terminated, info = self.market.run_step(action, self.gen_id)
-        return (r, obs, terminated, info)
+        obs, r, terminated, truncated, info = self.market.run_step(action)
+        return (obs, r, terminated, truncated, info)
 
     def get_agent_state(self):
-        return self.market.get_agent_obs(self.gen_id)
+        return self.market.get_agent_obs()
+
+    def set_emissions(self, gen_emissions):
+        self.market.set_gen_emission(gen_emissions)

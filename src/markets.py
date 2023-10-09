@@ -1,4 +1,4 @@
-from typing import Tuple, List
+from typing import List, Tuple
 
 import matlab.engine
 import numpy as np
@@ -320,6 +320,10 @@ class CarbonMarket:
         self.price_beta = config.price_beta
         self.penalty = config.carbon_penalty
 
+        self.agent_gen_id = config.agent_gen_id
+
+        self.rewards = []
+
     def reset_system(self):
         self.reset_timestep()
         self.carbon_prices = [self.config.carbon_price_initial]
@@ -331,6 +335,7 @@ class CarbonMarket:
             (self.config.n_trading_days, self.config.n_gens)
         )
         self.buying_volumes = np.zeros((self.config.n_trading_days, self.config.n_gens))
+        self.rewards = []
 
     @property
     def carbon_price_now(self) -> float:
@@ -374,20 +379,24 @@ class CarbonMarket:
 
     def increase_timestep(self):
         """increase day_t"""
-        if self.terminated:
-            self.reset_timestep()
+        if self.last_day:
+            self.reset_system()
         self.day_t += 1
 
     @property
     def terminated(self):
         # TODO: check
-        return self.day_t + 1 == self.n_trading_days
+        return self.day_t == 0
+
+    @property
+    def last_day(self):
+        return self.day_t == self.n_trading_days - 1
 
     def reset_timestep(self):
         """reset day_t"""
         self.day_t = 0
 
-    def get_agent_obs(self, gen_id):
+    def get_agent_obs(self):
         """
         potential info:
         1. expected emission
@@ -400,18 +409,20 @@ class CarbonMarket:
         4. carbon allowance
         5. time remaining
         """
-        # TODO: check
-        tot_gen_emission_now = np.sum(
-            self.gen_emissions[: self.day_t, gen_id], dtype=np.float32
+        tot_agent_emission_now = np.sum(
+            self.gen_emissions[: self.day_t, self.agent_gen_id], dtype=np.float32
         )
         tot_system_emission_now = np.sum(self.gen_emissions, axis=None)
-        return (
-            tot_gen_emission_now,
+        obs = (
+            tot_agent_emission_now,
             tot_system_emission_now,
             self.carbon_prices[-1],
-            self.carbon_allowance[-1][gen_id],
+            self.carbon_allowance[-1][self.agent_gen_id],
             self.n_trading_days - self.day_t - 1,
         )
+        # convert obs to np.array
+        obs = np.array(obs, dtype=np.float32)
+        return obs
 
     def get_rule_obs(self):
         """
@@ -419,16 +430,15 @@ class CarbonMarket:
         """
         prev_emission = self.get_emission_record()
         allowance_now = self.get_allowance()
-        remaining_time = self.get_remaining_time()
+        remaining_time = self.remaining_days
         return prev_emission, allowance_now, remaining_time
 
-    def calc_agent_reward(self, action, agent_gen_id):
-        # action[0] is buying, action[1] is selling
-        r = self.carbon_prices[-2] * (action[0][agent_gen_id] + action[1][agent_gen_id])
+    def calc_agent_reward(self, action):
+        r = self.carbon_prices[-1] * action
         return r
 
     def calc_gen_reward(self, action):
-        r = self.carbon_prices[-2] * (action[0] + action[1])
+        r = self.carbon_prices[-1] * action
         return r
 
     def price_clearing(self):
@@ -437,7 +447,7 @@ class CarbonMarket:
         T = self.n_trading_days
         t = self.day_t + 1
 
-        p_e_last = self.carbon_prices[-1]
+        p_e_last = self.carbon_price_now
 
         # assume we know the estimated total system emission
 
@@ -460,7 +470,9 @@ class CarbonMarket:
         q_s_e_last = np.sum(self.selling_volumes[t - 1, :])
 
         # short_term supply-demand balance
-        short_term_balance = (q_b_e_last - q_s_e_last) / (q_b_e_last + q_s_e_last)
+        short_term_balance = (q_b_e_last - q_s_e_last) / (
+            q_b_e_last + q_s_e_last + 1e-8
+        )
 
         p_e_now = (
             p_e_last
@@ -468,84 +480,107 @@ class CarbonMarket:
             + self.price_beta * short_term_balance
         )
 
+        if p_e_now <= 0:
+            print("NEGATIVE carbon price: ", p_e_now)
+            p_e_now = 0
+
         self.carbon_prices.append(p_e_now)
 
         return p_e_now
 
     def pay_compliance(self):
         """pay compliance cost"""
-        cost = (
-            np.maximum(
-                self.carbon_allowance[-1] - np.sum(self.gen_emissions, axis=0), 0
-            )
-            * self.penalty
+        r = (
+            self.carbon_allowance[-1][self.agent_gen_id]
+            - self.gen_emissions[:, self.agent_gen_id].sum()
+        ) * self.carbon_price_now
+        return r
+
+    def run_step(self, agent_action=None):
+        if self.last_day:
+            r = self.pay_compliance()
+            terminated = True
+        else:
+            info = self.trade(agent_action)
+            r = self.calc_agent_reward(info["agent_action"])
+            terminated = False
+        self.rewards += [r]
+        if terminated:
+            info = {
+                "final_info": {"episode": {"r": np.sum(self.rewards, dtype=np.float32)}}
+            }
+        else:
+            info = {}
+        obs = self.get_agent_obs()
+        truncated = False
+        return obs, r, terminated, truncated, info
+
+    def get_rule_actions(self):
+        """get rule-based actions"""
+
+        assert self.gen_emissions[self.day_t].sum() > 0
+
+        prev_emission, allowance_now, remaining_time = self.get_rule_obs()
+        prev_emission_total = np.sum(prev_emission, axis=0)
+        prev_emission_mean = np.mean(prev_emission, axis=0)
+
+        remaining_allowance = allowance_now - prev_emission_total
+        emission_expected = prev_emission_mean * remaining_time
+
+        rule_actions = np.array(
+            emission_expected - remaining_allowance, dtype=np.float32
         )
-        return cost
-
-    def run_step(self, action, gen_id):
-        # TODO: check
-        if self.terminated:
-            cost = self.pay_compliance()
-            info = self.get_rule_obs()
-            r = cost
-        else:
-            info = self.trade(action[0], action[1])
-            r = self.calc_agent_reward(action, gen_id)
-            obs = self.get_agent_obs(gen_id)
-        obs = self.get_agent_obs(gen_id)
-        terminated = self.terminated
-        return r, obs, terminated, info
-
-    def run_step_rule(self, action):
-        if self.terminated:
-            cost = self.pay_compliance()
-            info = self.get_rule_obs()
-            r = cost
-        else:
-            info = self.trade(action[0], action[1])
-            r = self.calc_gen_reward(action)
-        obs = self.get_rule_obs()
-        terminated = self.terminated
-        return r, obs, terminated, info
+        return rule_actions
 
     def trade(
         self,
-        buying_volumes: np.array,
-        selling_volumes: np.array,
+        agent_action,
     ):
-        """trade emission allowances
-
-        Args:
-            buying_volumes (np.array): buying volumes of each gen
-            selling_volumes (np.array): selling volumes of each gen
-        """
+        """trade emission allowances"""
 
         assert sum(self.gen_emissions[self.day_t]) > 0
 
-        assert not self.terminated
+        assert not self.last_day
+
+        rule_actions = self.get_rule_actions()
+
+        # if agent_action is None, use rule action
+        if agent_action:
+            rule_actions[self.agent_gen_id] = agent_action
+        actions = rule_actions
+
+        # actions e.g.: np.array([1, 2, -1, 1, 3])
+        # in this case, make buying_volumes = np.array([1, 2, 0, 1, 3])
+        # and selling_volumes = np.array([0, 0, 1, 0, 0])
+
+        self.buying_volumes[self.day_t, :] = np.maximum(actions, 0)
+        self.selling_volumes[self.day_t, :] = np.maximum(-actions, 0)
 
         # set volumes & gen emission
-        self.buying_volumes[self.day_t, :] = buying_volumes
-        self.selling_volumes[self.day_t, :] = selling_volumes
 
         # change price
         self.price_clearing()
 
         # change allowance
         carbon_allowance_last = self.carbon_allowance[-1]
+
+        # both buying and selling and positive number
         carbon_allowance_now = (
-            np.array(carbon_allowance_last) + buying_volumes - selling_volumes
+            np.array(carbon_allowance_last)
+            + self.buying_volumes[self.day_t, :]
+            - self.selling_volumes[self.day_t, :]
         )
 
         # trading days + 1
-        self.day_t += 1
+        self.increase_timestep()
 
         self.carbon_allowance.append(carbon_allowance_now)
 
         info = {
             "allowance": carbon_allowance_now,
             "price": self.carbon_price_now,
-            "remaining_days": self.n_trading_days - self.day_t,
+            "remaining_days": self.remaining_days,
+            "agent_action": actions[self.agent_gen_id],
         }
 
         return info
@@ -564,6 +599,7 @@ class CarbonMarket:
         """get allowance"""
         return self.carbon_allowance[-1]
 
-    def get_remaining_time(self):
+    @property
+    def remaining_days(self):
         """get remaining time"""
         return self.n_trading_days - self.day_t

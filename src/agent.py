@@ -23,8 +23,6 @@ class RuleAgent:
         emission_expected = prev_emission_mean * remaining_time
 
         # if action > 0, buy extra allowance, else sell allowance
-        action = emission_expected - remaining_allowance
-        buy = np.where(action > 0, action, 0)
-        sell = np.where(action < 0, -action, 0)
+        action = np.array(emission_expected - remaining_allowance, dtype=np.float32)
 
-        return (buy, sell)
+        return action
