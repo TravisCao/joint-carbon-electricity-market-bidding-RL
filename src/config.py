@@ -25,7 +25,7 @@ class Config:
 
     n_timesteps = 48
 
-    num_mkt = 11
+    num_mkt = 50
 
     PRC_COL = 1
     QTY_COL = 0

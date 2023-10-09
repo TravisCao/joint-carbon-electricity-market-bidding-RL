@@ -6,7 +6,6 @@ import matlab.engine
 # import markets
 from markets import ElectricityMarket, CarbonMarket
 
-
 # reinforcment learning env for electricity market
 # use gym env as a template
 class ElecMktEnv:

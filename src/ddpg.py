@@ -133,10 +133,10 @@ class QNetwork(nn.Module):
         super().__init__()
         self.fc1 = nn.Linear(
             obs_dim + act_dim,
-            256,
+            64,
         )
-        self.fc2 = nn.Linear(256, 256)
-        self.fc3 = nn.Linear(256, 1)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc3 = nn.Linear(64, 1)
 
     def forward(self, x, a):
         x = torch.cat([x, a], 1)
@@ -149,9 +149,9 @@ class QNetwork(nn.Module):
 class Actor(nn.Module):
     def __init__(self, obs_dim, act_dim, act_high, act_low):
         super().__init__()
-        self.fc1 = nn.Linear(obs_dim, 256)
-        self.fc2 = nn.Linear(256, 256)
-        self.fc_mu = nn.Linear(256, act_dim)
+        self.fc1 = nn.Linear(obs_dim, 64)
+        self.fc2 = nn.Linear(64, 64)
+        self.fc_mu = nn.Linear(64, act_dim)
         # action rescaling
         self.register_buffer(
             "action_scale",
