@@ -1,18 +1,17 @@
-from gencon import GenCon
-from utils import calc_gen_reward
-import numpy as np
-import matlab.engine
-from config import Config
-
-# import markets
-from markets import ElectricityMarket, CarbonMarket
-
 import gymnasium as gym
+import matlab.engine
+import numpy as np
 from gymnasium import spaces
 from gymnasium.envs.registration import register
 
+from config import Config
+from gencon import GenCon
+# import markets
+from markets import CarbonMarket, ElectricityMarket
+from utils import calc_gen_reward
+
 register(
-    id="MM-Mkt-v0",
+    id="MMMkt-v0",
     entry_point="env:MMMktEnv",
 )
 
@@ -32,10 +31,19 @@ class MMMktEnv(gym.Env):
         self.num_envs = config.num_mkt
         self.is_vector_env = True
 
+        self.n_time_steps = config.n_timesteps
+
+        self.elec_rewards = None
+
         self.carb_mkts = [CarbonMarket(config) for _ in range(self.num_mkt)]
         self.elec_mkts = [
             ElectricityMarket(config, engine) for _ in range(self.num_mkt)
         ]
+
+        self.gencons = [
+            GenCon(i, config.gen_units[i], config) for i in range(self.config.n_gens)
+        ]
+
         action_low = np.array([1 for _ in range(config.elec_act_dim)] + [-np.inf])
         action_high = np.array([2 for _ in range(config.elec_act_dim)] + [np.inf])
         self.action_space = spaces.Box(
@@ -51,10 +59,10 @@ class MMMktEnv(gym.Env):
         self.single_action_space = self.action_space
 
     def reset(self, seed=None, options=None):
+        self.elec_rewards = np.zeros((self.num_mkt, self.config.n_trading_days))
         obs = np.zeros((self.num_mkt, self.config.obs_dim))
         info = {}
         for i in range(self.num_mkt):
-            # TODO: change elec_mkt reset
             obs[i, : self.config.elec_obs_dim] = self.elec_mkts[i].reset()
             obs[i, self.config.elec_obs_dim :] = self.carb_mkts[i].reset()
         return obs, info
@@ -62,14 +70,25 @@ class MMMktEnv(gym.Env):
     # implement step function
     def step(self, actions):
         # step one day directly
-        assert actions.shape == (self.num_mkt, self.config.act_dim)
+        if len(actions.shape) == 2:
+            assert actions.shape == (self.num_mkt, self.config.act_dim)
+        else:
+            assert len(actions) == self.num_mkt * self.config.act_dim
         # get multiple run step input from each mkt
         run_step_inputs = []
+
+        elec_actions = actions[:, : self.config.elec_act_dim]
+        carb_actions = actions[:, -1].flatten()
         for i in range(self.num_mkt):
             # TODO: elect receive 24 actions and run once
-            run_step_inputs += [self.elec_mkts[i].get_run_step_input(actions[i])]
+            run_step_inputs += [self.elec_mkts[i].get_run_step_input(elec_actions[i])]
 
         winds, solars, loads, offer_qtys, offer_prcs = list(zip(*run_step_inputs))
+        winds = np.array(winds).flatten().tolist()
+        solars = np.array(solars).flatten().tolist()
+        loads = np.array(loads).flatten().tolist()
+        offer_qtys = np.array(offer_qtys).reshape((-1, self.config.n_gens, 3)).tolist()
+        offer_prcs = np.array(offer_prcs).reshape((-1, self.config.n_gens, 3)).tolist()
         max_new_loads = (
             [self.config.MAX_NEW_LOAD] * self.config.n_timesteps * self.num_mkt
         )
@@ -81,32 +100,65 @@ class MMMktEnv(gym.Env):
             matlab.double(offer_qtys),
             matlab.double(offer_prcs),
         )
+
         obs_list = np.zeros((self.num_mkt, self.config.obs_dim), dtype=np.float32)
+        elec_rewards = np.zeros((self.num_mkt, self.n_time_steps), dtype=np.float32)
         rewards = np.zeros(self.num_mkt, dtype=np.float32)
-        terminations = np.zeros(self.num_mkt, dtype=np.bool)
+        terminations = np.zeros(self.num_mkt, dtype=bool)
+        truncateds = np.zeros(self.num_mkt, dtype=bool)
+
+        gen_emissions = np.zeros(
+            (self.num_mkt, self.n_time_steps, self.config.n_gens), dtype=np.float32
+        )
+        # all elec mkt obs are the same
+        obs_list[:, : self.config.elec_obs_dim] = self.elec_mkts[0].get_state()
+
         # info for carbon and elec reward
         infos = []
-        # elec_obs =
-        for i, mkt in enumerate(self.mkts):
-            obs, r, terminated, info = mkt.step_no_run(np.array(results[i]["clear"]))
-            obs_list[i] = obs
-            rewards[i] = r
-            terminations[i] = terminated
-            infos.append(info)
+        for i, result in enumerate(results):
+            mkt_idx = i // self.n_time_steps
+            time_idx = i % self.n_time_steps
+            res = np.array(result["clear"])
+            elec_rewards[mkt_idx, time_idx] = self.elec_mkts[0].calc_gen_reward(res)
+
+            for j in range(self.config.n_gens):
+                gen_emissions[mkt_idx, time_idx, j] = self.gencons[
+                    j
+                ].calc_carbon_emission(res[j, self.config.QTY_COL])
+            # set emissions
+        for i, carb_mkt in enumerate(self.carb_mkts):
+            elec_r_day = elec_rewards[i].sum()
+            self.elec_rewards[i, carb_mkt.day_t] = elec_r_day
+            carb_mkt.set_gen_emission(gen_emissions[i].sum(axis=0)[i])
+            (
+                carb_obs,
+                carb_r,
+                carb_terminated,
+                _,
+                carb_info,
+            ) = carb_mkt.run_step(carb_actions[i])
+
+            terminations[i] = carb_terminated
+            rewards[i] = carb_r + elec_r_day
+            obs_list[i, self.config.elec_obs_dim :] = carb_obs
+
+            if "final_info" in carb_info:
+                elec_r_mkt = self.elec_rewards[i].sum()
+                carb_info["final_info"]["episode"]["carb_r"] = carb_info["final_info"][
+                    "episode"
+                ]["r"]
+                carb_info["final_info"]["episode"]["elec_r"] = elec_r_mkt
+                carb_info["final_info"]["episode"]["r"] = (
+                    carb_info["final_info"]["episode"]["r"] + elec_r_mkt
+                )
+            carb_info["carb_r"] = carb_r
+            carb_info["elec_r"] = elec_r_day
+
+            infos.append(carb_info)
 
         infos = {k: [d[k] for d in infos] for k in infos[0]}
 
-        truncated = np.zeros(self.num_mkt, dtype=np.bool)
-        return obs_list, rewards, terminations, truncated, infos
-
-    def get_state(self):
-        obs_list = np.zeros((self.num_mkt, self.config.obs_dim))
-        for i, mkt in enumerate(self.mkts):
-            obs_list[i] = mkt.get_state()
-        return obs_list
-
-    def close(self):
-        self.engine.quit()
+        return obs_list, rewards, terminations, truncateds, infos
 
 
 # reinforcement learning env for carbon market
@@ -140,7 +192,15 @@ class CarbMktEnv:
 
 
 if __name__ == "__main__":
-    env = MMMktEnv()
-    obs, _ = env.reset()
-    print(obs)
-    print(obs.shape)
+    config = Config()
+    config.num_mkt = 2
+    config.n_trading_days = 2
+    env = MMMktEnv(config=config)
+    env.reset()
+    for i in range(4):
+        obs, r, terminations, _, infos = env.step(actions=np.ones((2, 25)))
+        print(obs)
+        print(r)
+        print(terminations)
+        print(infos)
+

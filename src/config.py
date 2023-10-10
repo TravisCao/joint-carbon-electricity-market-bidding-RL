@@ -53,8 +53,8 @@ class Config:
     n_trading_days = 100
 
     # free carbon allowance 90%, expected 46521 * 100 / 6 (n_gens) * 0.9
-    carbon_allowance_initial = 697815
-    carbon_price_initial = 10
+    carbon_allowance_initial = 3500 * n_trading_days
+    carbon_price_initial = 40
 
     carbon_penalty = 1e8
 

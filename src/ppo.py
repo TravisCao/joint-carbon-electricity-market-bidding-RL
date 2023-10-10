@@ -5,15 +5,16 @@ import time
 from distutils.util import strtobool
 
 import gymnasium as gym
+import matlab.engine
 import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.distributions.normal import Normal
 from torch.utils.tensorboard import SummaryWriter
-from env import ElecMktEnv, CarbMktEnv
+
 from config import Config
-import matlab.engine
+from env import MMMktEnv
 
 
 def parse_args(jupyter=False):
@@ -37,7 +38,7 @@ def parse_args(jupyter=False):
         help="whether to capture videos of the agent performances (check out `videos` folder)")
 
     # Algorithm specific arguments
-    parser.add_argument("--env-id", type=str, default="ElecMkt-v0",
+    parser.add_argument("--env-id", type=str, default="MMMkt-v0",
         help="the id of the environment")
     parser.add_argument("--total-timesteps", type=int, default=1000000,
     # parser.add_argument("--total-timesteps", type=int, default=Config.total_timesteps,
@@ -48,7 +49,9 @@ def parse_args(jupyter=False):
     parser.add_argument("--num-envs", type=int, default=50,
         help="the number of parallel game environments")
     # parser.add_argument("--num-steps", type=int, default=2048,
-    parser.add_argument("--num-steps", type=int, default=Config.n_timesteps,
+    parser.add_argument("--n-trading-days", type=int, default=Config.n_trading_days,
+        help="number of trading days")
+    parser.add_argument("--num-steps", type=int, default=Config.n_trading_days,
         help="the number of steps to run in each environment per policy rollout")
     parser.add_argument("--anneal-lr", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
         help="Toggle learning rate annealing for policy and value networks")
@@ -74,7 +77,7 @@ def parse_args(jupyter=False):
         help="the maximum norm for the gradient clipping")
     parser.add_argument("--target-kl", type=float, default=None,
         help="the target KL divergence threshold")
-    parser.add_argument("--save-model", type=lambda x: bool(strtobool(x)), default=False, nargs="?", const=True,
+    parser.add_argument("--save-model", type=lambda x: bool(strtobool(x)), default=True, nargs="?", const=True,
         help="whether to save model into the `runs/{run_name}` folder")
     if jupyter:
         args = parser.parse_args(args=[])
@@ -105,32 +108,36 @@ def evaluate(
     agent,
     device: torch.device = torch.device("cpu"),
 ):
-    assert len(env.mkts) == 1
+    assert len(env.carb_mkts) == len(env.elec_mkts) == 1
     agent.eval()
 
     obs_eval, _ = env.reset()
-    episodic_returns = 0
+    cnt = 0
     while 1:
         # if len(episodic_returns) < Config.n_trading_days:
         with torch.no_grad():
             action_eval = agent.get_action_mean(torch.Tensor(obs_eval).to(device))
 
         next_obs_eval, _, _, _, info_eval = env.step(
-            action_eval.cpu().numpy().flatten()
+            action_eval.cpu().numpy().reshape(1, -1)
+        )
+
+        print(
+            f"eval_day={cnt}, elec_r={info_eval['elec_r'][0]}, carb_r={info_eval['carb_r'][0]}"
         )
 
         # final_info means 1 day is finished
         if "final_info" in info_eval:
-            episodic_returns += info_eval["episode"]["r"][0]
-            # for info_eval in infos:
-            # print(
-            #     f"eval_day={len(episodic_returns)}, episodic_return={info['final_info']['r']}"
-            # )
-            # episodic_returns += info["episode"]["r"]
+            epi_r_total = info_eval['final_info']["episode"]["r"][0]
+            epi_r_carb = info_eval['final_info']["episode"]["carb_r"][0]
+            epi_r_elec = info_eval['final_info']["episode"]["elec_r"][0]
+            print(
+                f"LAST DAY, elec rewards={epi_r_elec}, carb_r={epi_r_carb}, total_r={epi_r_total}"
+            )
             break
         obs_eval = next_obs_eval
-    print(f"episodic_returns={episodic_returns}")
-    return episodic_returns
+        cnt += 1
+    return epi_r_total, epi_r_elec, epi_r_carb
 
 
 def layer_init(layer, std=np.sqrt(2), bias_const=0.0):
@@ -187,8 +194,12 @@ if __name__ == "__main__":
     engine = matlab.engine.start_matlab()
     args = parse_args(jupyter)
 
+    config = Config()
+    config.n_trading_days = args.n_trading_days
+    config.num_mkt = args.num_envs
+
     # eval env
-    config_eval = Config()
+    config_eval = config
     config_eval.num_mkt = 1
     env_eval = make_env(args.env_id, args.gamma, config_eval, engine)
 
@@ -220,7 +231,6 @@ if __name__ == "__main__":
 
     device = torch.device("cuda" if torch.cuda.is_available() and args.cuda else "cpu")
 
-    config = Config()
     config.num_mkt = args.num_envs
     envs = make_env(args.env_id, args.gamma, config, engine=engine)
     assert isinstance(
@@ -242,9 +252,11 @@ if __name__ == "__main__":
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
     values = torch.zeros((args.num_steps, args.num_envs)).to(device)
 
-    episode_r = evaluate(env_eval, agent, device=device)
+    episode_r, epi_elec, epi_carb = evaluate(env_eval, agent, device=device)
     agent.train()
     writer.add_scalar("eval/episodic_r", episode_r, 0)
+    writer.add_scalar("eval/episodic_r_elec", epi_elec, 0)
+    writer.add_scalar("eval/episodic_r_carb", epi_carb, 0)
 
     eval_episodic_r_best = episode_r
 
@@ -406,13 +418,16 @@ if __name__ == "__main__":
         explained_var = np.nan if var_y == 0 else 1 - np.var(y_true - y_pred) / var_y
 
         if args.save_model:
-            episode_r = evaluate(env_eval, agent, device=device)
+            episode_r, epi_elec, epi_carb = evaluate(env_eval, agent, device=device)
+            writer.add_scalar("eval/episodic_r", episode_r, 0)
             if episode_r > eval_episodic_r_best:
                 eval_episodic_r_best = episode_r
                 path = f"runs/{run_name}/{args.exp_name}.cleanrl_model_best_{episode_r:.3f}"
                 torch.save(agent.state_dict(), path)
                 print(f"current best: {episode_r}. model saved to {path}")
             writer.add_scalar("eval/episodic_r", episode_r, global_step)
+            writer.add_scalar("eval/episodic_r_elec", epi_elec, global_step)
+            writer.add_scalar("eval/episodic_r_carb", epi_carb, global_step)
             agent.train()
 
         # TRY NOT TO MODIFY: record rewards for plotting purposes
