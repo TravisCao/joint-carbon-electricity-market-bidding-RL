@@ -138,14 +138,16 @@ class ElectricityMarket:
     def step_no_run(self, res):
         r = self.calc_gen_reward(res)
         self.rewards += [r]
+        rewards = np.array(self.rewards)
+        self.increase_timestep()
+        # obs in the next timestep
         obs = self.get_state()
         info = {}
-        if self.last_timestep:
+        if self.terminated:
             info["final_info"] = {}
             info["final_info"]["episode"] = {}
-            info["final_info"]["episode"]["r"] = sum(self.rewards)
+            info["final_info"]["episode"]["r"] = sum(rewards)
             # info["final_info"]["episode"]["l"] = self.config.n_timesteps
-        self.increase_timestep()
         return obs, r, self.terminated, info
 
     def _run_step(
