@@ -56,20 +56,17 @@ class ElectricityMarket:
         self.timestep = 0
 
     def reset(self):
-        self.rewards = []
+        # self.rewards = []
         self.reset_timestep()
         return self.get_state()
 
     def get_state(self):
-        return np.array(
+        return np.concatenate(
             [
-                self.loads[self.timestep],
-                self.wind_gen_exps[self.timestep],
-                self.solar_gen_exps[self.timestep],
-                # for numerical stability
-                self.timestep / self.config.n_timesteps,
+                self.loads,
+                self.wind_gen_exps,
+                self.solar_gen_exps,
             ],
-            dtype=np.float32,
         )
 
     @property
@@ -87,22 +84,24 @@ class ElectricityMarket:
             return
         self.timestep += 1
 
-    def get_run_step_input(self, agent_gen_action: float):
-        load_step = self.loads[self.timestep]
-        wind_exp_step = self.wind_gen_exps[self.timestep]
-        solar_exp_step = self.solar_gen_exps[self.timestep]
+    def get_run_step_input(self, agent_gen_action: np.array):
+        loads = self.loads
+        winds = self.wind_gen_exps
+        solars = self.solar_gen_exps
 
-        # sample solar wind in this step
-        solar_gen_step, wind_gen1_step, wind_gen2_step = self.sample_sol_wind_gen_step(
-            wind_exp_step, solar_exp_step
-        )
+        solars, winds1, _ = self.sample_sol_wind_gen_all(winds, solars)
 
-        offers_qty, offers_prc, qty_prc_pairs = self.generate_piecewise_price(
-            self.gencost_coef, agent_gen_action
-        )
-        offers_qty = offers_qty.tolist()
-        offers_prc = offers_prc.tolist()
-        return wind_gen1_step, solar_gen_step, load_step, offers_qty, offers_prc
+        assert len(agent_gen_action) == self.config.elec_act_dim
+        offers_qty_list = []
+        offers_prc_list = []
+        for i in range(self.config.elec_act_dim):
+            offers_qty, offers_prc, _ = self.generate_piecewise_price(
+                self.gencost_coef, agent_gen_action[i]
+            )
+            offers_qty_list.append(offers_qty.tolist())
+            offers_prc_list.append(offers_prc.tolist())
+
+        return winds1, solars, loads, offers_qty_list, offers_prc_list
 
     def run_step(self, agent_gen_action: float):
         """run eletricity market in one timestep
@@ -263,6 +262,40 @@ class ElectricityMarket:
             ) / offers_qty[:, i]
         return offers_qty, offers_prc, qty_prc_pairs
 
+    def sample_sol_wind_gen_all(
+        self,
+        wind: np.array,
+        solar: np.array,
+    ):
+        """sample solar and wind gen in a step
+
+        Args:
+            wind (np.array): wind expectation
+            solar (np.array): solar expectation
+
+        Returns:
+            Tuple[np.array, np.array, np.array]: solar power, wind power1, wind power2
+        """
+        wind_gen = wind * self.MAX_NEW_LOAD
+        sol_gen = solar * self.MAX_NEW_LOAD
+
+        # renew gen real
+        wind_gen1 = wind_gen * np.random.weibull(self.WEIBUL_PAR)
+        wind_gen2 = wind_gen * np.random.weibull(self.WEIBUL_PAR)
+
+        sol_gen = sol_gen * np.random.beta(self.BETA_PAR1, self.BETA_PAR2)
+
+        # 20%limit
+        wind_gen1 = np.minimum(np.minimum(wind_gen * 1.2, wind_gen1), self.MAX_NEW_LOAD)
+        wind_gen1 = np.maximum(wind_gen * 0.8, wind_gen1)
+
+        wind_gen2 = np.minimum(np.minimum(wind_gen * 1.2, wind_gen2), self.MAX_NEW_LOAD)
+        wind_gen2 = np.maximum(wind_gen * 0.8, wind_gen2)
+
+        sol_gen = np.minimum(np.minimum(sol_gen * 1.2, sol_gen), self.MAX_NEW_LOAD)
+        sol_gen = np.maximum(sol_gen * 0.8, sol_gen)
+        return sol_gen, wind_gen1, wind_gen2
+
     def sample_sol_wind_gen_step(
         self,
         wind: float,
@@ -312,6 +345,8 @@ class CarbonMarket:
         self.selling_volumes = None
         self.buying_volumes = None
 
+        self.agent_gen_id = config.agent_gen_id
+
         self.reset_system()
         self.n_trading_days = config.n_trading_days
         self.day_t = 0
@@ -331,6 +366,10 @@ class CarbonMarket:
             (self.config.n_trading_days, self.config.n_gens)
         )
         self.buying_volumes = np.zeros((self.config.n_trading_days, self.config.n_gens))
+
+    def reset(self):
+        self.reset_system()
+        return self.get_agent_obs()
 
     @property
     def carbon_price_now(self) -> float:
@@ -387,7 +426,7 @@ class CarbonMarket:
         """reset day_t"""
         self.day_t = 0
 
-    def get_agent_obs(self, gen_id):
+    def get_agent_obs(self):
         """
         potential info:
         1. expected emission
@@ -400,15 +439,16 @@ class CarbonMarket:
         4. carbon allowance
         5. time remaining
         """
-        # TODO: check
-        tot_gen_emission_now = np.sum(self.gen_emissions[: self.day_t, gen_id])
+        tot_gen_emission_now = np.sum(
+            self.gen_emissions[: self.day_t, self.agent_gen_id]
+        )
         tot_system_emission_now = np.sum(self.gen_emissions, axis=None)
         return (
             tot_gen_emission_now,
             tot_system_emission_now,
             self.carbon_prices[-1],
-            self.carbon_allowance[-1][gen_id],
-            self.n_trading_days - self.day_t - 1,
+            self.carbon_allowance[-1][self.agent_gen_id],
+            self.day_t,
         )
 
     def get_rule_obs(self):
@@ -565,3 +605,16 @@ class CarbonMarket:
     def get_remaining_time(self):
         """get remaining time"""
         return self.n_trading_days - self.day_t
+
+
+if __name__ == "__main__":
+    import matlab.engine
+
+    config = Config()
+    engine = matlab.engine.start_matlab()
+    market = ElectricityMarket(
+        config=config,
+        engine=engine,
+    )
+
+    print(market.get_run_step_input(np.ones(24)))

@@ -12,14 +12,14 @@ from gymnasium import spaces
 from gymnasium.envs.registration import register
 
 register(
-    id="ElecMkt-v0",
-    entry_point="env:ElecMktEnv",
+    id="MM-Mkt-v0",
+    entry_point="env:MMMktEnv",
 )
 
 
 # reinforcment learning env for electricity market
 # use gym env as a template
-class ElecMktEnv(gym.Env):
+class MMMktEnv(gym.Env):
     def __init__(self, config=None, engine=None) -> None:
         if config is None:
             config = Config
@@ -32,34 +32,47 @@ class ElecMktEnv(gym.Env):
         self.num_envs = config.num_mkt
         self.is_vector_env = True
 
-        self.mkts = [ElectricityMarket(config, engine) for _ in range(self.num_mkt)]
-        self.action_space = spaces.Box(low=1.0, high=2.0, dtype=np.float32)
+        self.carb_mkts = [CarbonMarket(config) for _ in range(self.num_mkt)]
+        self.elec_mkts = [
+            ElectricityMarket(config, engine) for _ in range(self.num_mkt)
+        ]
+        action_low = np.array([1 for _ in range(config.elec_act_dim)] + [-np.inf])
+        action_high = np.array([2 for _ in range(config.elec_act_dim)] + [np.inf])
+        self.action_space = spaces.Box(
+            low=action_low, high=action_high, shape=(config.act_dim,), dtype=np.float32
+        )
         self.observation_space = spaces.Box(
             low=0,
             high=np.inf,
-            shape=(self.config.elec_obs_dim,),
+            shape=(self.config.obs_dim,),
             dtype=np.float32,
         )
         self.single_observation_space = self.observation_space
         self.single_action_space = self.action_space
 
     def reset(self, seed=None, options=None):
-        obs = np.zeros((self.num_mkt, self.config.elec_obs_dim))
+        obs = np.zeros((self.num_mkt, self.config.obs_dim))
         info = {}
-        for i, mkt in enumerate(self.mkts):
-            obs[i] = mkt.reset()
+        for i in range(self.num_mkt):
+            # TODO: change elec_mkt reset
+            obs[i, : self.config.elec_obs_dim] = self.elec_mkts[i].reset()
+            obs[i, self.config.elec_obs_dim :] = self.carb_mkts[i].reset()
         return obs, info
 
     # implement step function
     def step(self, actions):
-        assert len(actions) == len(self.mkts)
+        # step one day directly
+        assert actions.shape == (self.num_mkt, self.config.act_dim)
         # get multiple run step input from each mkt
         run_step_inputs = []
-        for i, mkt in enumerate(self.mkts):
-            run_step_inputs += [mkt.get_run_step_input(actions[i])]
+        for i in range(self.num_mkt):
+            # TODO: elect receive 24 actions and run once
+            run_step_inputs += [self.elec_mkts[i].get_run_step_input(actions[i])]
 
         winds, solars, loads, offer_qtys, offer_prcs = list(zip(*run_step_inputs))
-        max_new_loads = [self.config.MAX_NEW_LOAD for i in range(len(actions))]
+        max_new_loads = (
+            [self.config.MAX_NEW_LOAD] * self.config.n_timesteps * self.num_mkt
+        )
         results = self.engine.multi_price_sim(
             matlab.double(loads),
             matlab.double(solars),
@@ -68,10 +81,12 @@ class ElecMktEnv(gym.Env):
             matlab.double(offer_qtys),
             matlab.double(offer_prcs),
         )
-        obs_list = np.zeros((self.num_mkt, self.config.elec_obs_dim), dtype=np.float32)
+        obs_list = np.zeros((self.num_mkt, self.config.obs_dim), dtype=np.float32)
         rewards = np.zeros(self.num_mkt, dtype=np.float32)
         terminations = np.zeros(self.num_mkt, dtype=np.bool)
+        # info for carbon and elec reward
         infos = []
+        # elec_obs =
         for i, mkt in enumerate(self.mkts):
             obs, r, terminated, info = mkt.step_no_run(np.array(results[i]["clear"]))
             obs_list[i] = obs
@@ -85,7 +100,7 @@ class ElecMktEnv(gym.Env):
         return obs_list, rewards, terminations, truncated, infos
 
     def get_state(self):
-        obs_list = np.zeros((self.num_mkt, self.config.elec_obs_dim))
+        obs_list = np.zeros((self.num_mkt, self.config.obs_dim))
         for i, mkt in enumerate(self.mkts):
             obs_list[i] = mkt.get_state()
         return obs_list
@@ -122,3 +137,10 @@ class CarbMktEnv:
 
     def get_agent_state(self):
         return self.market.get_agent_obs(self.gen_id)
+
+
+if __name__ == "__main__":
+    env = MMMktEnv()
+    obs, _ = env.reset()
+    print(obs)
+    print(obs.shape)
