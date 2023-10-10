@@ -25,7 +25,7 @@ class Config:
 
     n_timesteps = 24
 
-    num_mkt = 30
+    num_mkt = 10
 
     PRC_COL = 1
     QTY_COL = 0
@@ -50,11 +50,11 @@ class Config:
     cems_data_path = f"{config_file_path}/../data/cems_coef.csv"
 
     # carbon market
-    n_trading_days = 100
+    n_trading_days = 10
 
     # free carbon allowance 90%, expected 46521 * 100 / 6 (n_gens) * 0.9
-    carbon_allowance_initial = 697815
-    carbon_price_initial = 10
+    carbon_price_initial = 40
+    carbon_allowance_initial = 3500 * n_trading_days
 
     carbon_penalty = 1e8
 

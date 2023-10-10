@@ -131,7 +131,7 @@ class ElectricityMarket:
         info = {}
         if self.terminated:
             info["final_info"] = {}
-            info["final_info"]["r"] = sum(self.rewards)
+            info["final_info"]["r"] = sum(self.rewards) / self.config.reward_scale
             # info["final_info"]["l"] = self.config.n_timesteps
         return obs, r, self.terminated, info
 
@@ -146,7 +146,7 @@ class ElectricityMarket:
         if self.terminated:
             info["final_info"] = {}
             info["final_info"]["episode"] = {}
-            info["final_info"]["episode"]["r"] = sum(rewards)
+            info["final_info"]["episode"]["r"] = sum(rewards) / self.config.reward_scale
             # info["final_info"]["episode"]["l"] = self.config.n_timesteps
         return obs, r, self.terminated, info
 
@@ -349,6 +349,11 @@ class CarbonMarket:
         return self.carbon_prices[-1]
 
     @property
+    def carbon_allowance_now(self) -> float:
+        """current carbon allowance"""
+        return self.carbon_allowance[-1]
+
+    @property
     def emission_price_ratio(self) -> float:
         """implement emission_price_ratio
         in paper
@@ -441,11 +446,7 @@ class CarbonMarket:
 
     def calc_agent_reward(self, action):
         r = self.carbon_prices[-1] * action
-        return r
-
-    def calc_gen_reward(self, action):
-        r = self.carbon_prices[-1] * action
-        return r
+        return r * self.config.reward_scale
 
     def price_clearing(self):
         """clear carbon price"""
@@ -500,7 +501,7 @@ class CarbonMarket:
             self.carbon_allowance[-1][self.agent_gen_id]
             - self.gen_emissions[:, self.agent_gen_id].sum()
         ) * self.carbon_price_now
-        return r
+        return r * self.config.reward_scale
 
     def run_step(self, agent_action=None):
         if self.last_day:
@@ -513,7 +514,12 @@ class CarbonMarket:
         self.rewards += [r]
         if terminated:
             info = {
-                "final_info": {"episode": {"r": np.sum(self.rewards, dtype=np.float32)}}
+                "final_info": {
+                    "episode": {
+                        "r": np.sum(self.rewards, dtype=np.float32)
+                        / self.config.reward_scale
+                    }
+                }
             }
         else:
             info = {}

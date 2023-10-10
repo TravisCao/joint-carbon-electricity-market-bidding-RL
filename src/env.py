@@ -92,7 +92,7 @@ class ElecMktEnv(gym.Env):
             terminations[i] = terminated
             infos.append(info)
 
-            qtys = results[i]["clear"][:, self.config.QTY_COL]
+            qtys = np.array(results[i]["clear"])[:, self.config.QTY_COL]
             # TODO: avoid for
             for j in range(self.config.n_gens):
                 self.gen_emissions[i, mkt.timestep, j] = np.array(
@@ -139,7 +139,7 @@ class CarbMktEnv(gym.Env):
         self.single_action_space = self.action_space
 
     def reset(self, seed=None, options=None):
-        obs = np.zeros((self.num_mkt, self.config.elec_obs_dim), dtype=np.float32)
+        obs = np.zeros((self.num_mkt, self.config.carb_obs_dim), dtype=np.float32)
         for i, mkt in enumerate(self.mkts):
             obs[i] = mkt.reset()
         info = {}
@@ -151,7 +151,7 @@ class CarbMktEnv(gym.Env):
         action=None,
     ):
         assert len(action) == len(self.mkts)
-        obs_list = np.zeros((self.num_mkt, self.config.elec_obs_dim), dtype=np.float32)
+        obs_list = np.zeros((self.num_mkt, self.config.carb_obs_dim), dtype=np.float32)
         rewards = np.zeros(self.num_mkt, dtype=np.float32)
         terminations = np.zeros(self.num_mkt, dtype=np.bool)
         truncated = np.zeros(self.num_mkt, dtype=np.bool)
@@ -164,15 +164,15 @@ class CarbMktEnv(gym.Env):
             infos.append(info)
 
         infos = {k: [d[k] for d in infos] for k in infos[0]}
-        return (obs, r, terminated, truncated, info)
+        return obs_list, rewards, terminations, truncated, infos
 
     def get_agent_state(self):
-        obs_list = np.zeros((self.num_mkt, self.config.elec_obs_dim))
+        obs_list = np.zeros((self.num_mkt, self.config.carb_obs_dim))
         for i, mkt in enumerate(self.mkts):
             obs_list[i] = mkt.get_agent_obs()
         return obs_list
 
-    def set_emissions(self, gen_emissions):
+    def set_gen_emissions(self, gen_emissions):
         for i, mkt in enumerate(self.mkts):
             mkt.set_gen_emission(gen_emissions[i])
 
