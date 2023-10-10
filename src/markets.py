@@ -339,6 +339,10 @@ class CarbonMarket:
         self.buying_volumes = np.zeros((self.config.n_trading_days, self.config.n_gens))
         self.rewards = []
 
+    def reset(self):
+        self.reset_system()
+        return self.get_agent_obs()
+
     @property
     def carbon_price_now(self) -> float:
         """current carbon price"""

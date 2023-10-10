@@ -34,6 +34,13 @@ class ElecMktEnv(gym.Env):
         self.num_envs = config.num_mkt
         self.is_vector_env = True
 
+        self.gencons = [
+            GenCon(i, config.gen_units[i], config) for i in range(config.n_gens)
+        ]
+        self.gen_emissions = np.zeros(
+            (config.num_mkt, config.n_timesteps, config.n_gens), dtype=np.float32
+        )
+
         self.mkts = [ElectricityMarket(config, engine) for _ in range(self.num_mkt)]
         self.action_space = spaces.Box(low=1.0, high=2.0, dtype=np.float32)
         self.observation_space = spaces.Box(
@@ -46,7 +53,10 @@ class ElecMktEnv(gym.Env):
         self.single_action_space = self.action_space
 
     def reset(self, seed=None, options=None):
-        obs = np.zeros((self.num_mkt, self.config.elec_obs_dim))
+        self.gen_emissions = np.zeros(
+            (self.config.num_mkt, self.config.n_timesteps, self.config.n_gens)
+        )
+        obs = np.zeros((self.num_mkt, self.config.elec_obs_dim), dtype=np.float32)
         info = {}
         for i, mkt in enumerate(self.mkts):
             obs[i] = mkt.reset()
@@ -70,6 +80,7 @@ class ElecMktEnv(gym.Env):
             matlab.double(offer_qtys),
             matlab.double(offer_prcs),
         )
+
         obs_list = np.zeros((self.num_mkt, self.config.elec_obs_dim), dtype=np.float32)
         rewards = np.zeros(self.num_mkt, dtype=np.float32)
         terminations = np.zeros(self.num_mkt, dtype=np.bool)
@@ -80,6 +91,13 @@ class ElecMktEnv(gym.Env):
             rewards[i] = r
             terminations[i] = terminated
             infos.append(info)
+
+            qtys = results[i]["clear"][:, self.config.QTY_COL]
+            # TODO: avoid for
+            for j in range(self.config.n_gens):
+                self.gen_emissions[i, mkt.timestep, j] = np.array(
+                    self.gencons[j].calc_carbon_emission(qtys[j])
+                )
 
         infos = {k: [d[k] for d in infos] for k in infos[0]}
 
@@ -95,23 +113,35 @@ class ElecMktEnv(gym.Env):
     def close(self):
         self.engine.quit()
 
+    def get_gen_emissions_day(self):
+        return np.sum(self.gen_emissions, axis=1, dtype=np.float32)
+
 
 # reinforcement learning env for carbon market
 class CarbMktEnv(gym.Env):
     def __init__(self, config=Config) -> None:
-        self.market = CarbonMarket(config)
         self.gen_id = config.agent_gen_id
+        self.num_envs = config.num_mkt
+        self.num_mkt = config.num_mkt
+        self.config = config
+        self.is_vector_env = True
 
+        self.mkts = [CarbonMarket(config) for _ in range(self.num_mkt)]
         self.observation_space = gym.spaces.Box(
-            low=0, high=np.inf, shape=(5,), dtype=np.float32
+            low=0,
+            high=np.inf,
+            shape=(config.carb_obs_dim,),
+            dtype=np.float32,
         )
 
-        self.action_space = gym.spaces.Box(
-            low=-np.inf, high=np.inf, shape=(1,), dtype=np.float32
-        )
+        self.action_space = gym.spaces.Box(low=-np.inf, high=np.inf, dtype=np.float32)
+        self.single_observation_space = self.observation_space
+        self.single_action_space = self.action_space
 
     def reset(self, seed=None, options=None):
-        self.market.reset_system()
+        obs = np.zeros((self.num_mkt, self.config.elec_obs_dim), dtype=np.float32)
+        for i, mkt in enumerate(self.mkts):
+            obs[i] = mkt.reset()
         info = {}
         return self.get_agent_state(), info
 
@@ -120,11 +150,37 @@ class CarbMktEnv(gym.Env):
         self,
         action=None,
     ):
-        obs, r, terminated, truncated, info = self.market.run_step(action)
+        assert len(action) == len(self.mkts)
+        obs_list = np.zeros((self.num_mkt, self.config.elec_obs_dim), dtype=np.float32)
+        rewards = np.zeros(self.num_mkt, dtype=np.float32)
+        terminations = np.zeros(self.num_mkt, dtype=np.bool)
+        truncated = np.zeros(self.num_mkt, dtype=np.bool)
+        infos = []
+        for i, mkt in enumerate(self.mkts):
+            obs, r, terminated, truncated, info = mkt.run_step(action[i])
+            obs_list[i] = obs
+            rewards[i] = r
+            terminations[i] = terminated
+            infos.append(info)
+
+        infos = {k: [d[k] for d in infos] for k in infos[0]}
         return (obs, r, terminated, truncated, info)
 
     def get_agent_state(self):
-        return self.market.get_agent_obs()
+        obs_list = np.zeros((self.num_mkt, self.config.elec_obs_dim))
+        for i, mkt in enumerate(self.mkts):
+            obs_list[i] = mkt.get_agent_obs()
+        return obs_list
 
     def set_emissions(self, gen_emissions):
-        self.market.set_gen_emission(gen_emissions)
+        for i, mkt in enumerate(self.mkts):
+            mkt.set_gen_emission(gen_emissions[i])
+
+
+if __name__ == "__main__":
+    from ppo import make_env
+    import numpy as np
+    from config import Config
+
+    carb_envs = make_env("CarbMkt-v0", 0.99, Config)
+    carb_envs.set_emissions(np.ones((Config.num_mkt, Config.n_gens)))

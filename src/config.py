@@ -66,6 +66,9 @@ class Config:
     elec_obs_dim = 4
     elec_act_dim = 1
 
+    carb_obs_dim = 5
+    carb_act_dim = 1
+
     elec_obs_space = gym.spaces.Box(
         low=0, high=np.inf, shape=(elec_obs_dim,), dtype=np.float32
     )
@@ -73,9 +76,6 @@ class Config:
 
     elec_act_high = 2.0
     elec_act_low = 2.0
-
-    carb_obs_dim = None
-    carb_act_dim = None
 
     reward_scale = 3e-3
 
