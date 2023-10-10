@@ -759,9 +759,9 @@ if __name__ == "__main__":
                 torch.save((elec_agent.state_dict(), carb_agent.state_dict()), path)
                 print(f"current best: {total_episode_r}. model saved to {path}")
 
-            writer.add_scalar("eval/elec/episodic_r", elec_episode_r, 0)
-            writer.add_scalar("eval/carb/episodic_r", carb_episode_r, 0)
-            writer.add_scalar("eval/total_episodic_r", total_episode_r, 0)
+            writer.add_scalar("eval/elec/episodic_r", elec_episode_r, global_step)
+            writer.add_scalar("eval/carb/episodic_r", carb_episode_r, global_step)
+            writer.add_scalar("eval/total_episodic_r", total_episode_r, global_step)
             elec_agent.train()
             carb_agent.train()
 
