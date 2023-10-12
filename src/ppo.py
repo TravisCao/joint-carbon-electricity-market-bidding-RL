@@ -121,6 +121,7 @@ def evaluate(
         next_obs_eval, _, _, _, info_eval = env.step(
             action_eval.cpu().numpy().reshape(1, -1)
         )
+        print(f"action_eval={action_eval.cpu().numpy().tolist()}")
 
         print(
             f"eval_day={cnt}, elec_r={info_eval['elec_r'][0]}, carb_r={info_eval['carb_r'][0]}"
@@ -128,9 +129,9 @@ def evaluate(
 
         # final_info means 1 day is finished
         if "final_info" in info_eval:
-            epi_r_total = info_eval['final_info']["episode"]["r"][0]
-            epi_r_carb = info_eval['final_info']["episode"]["carb_r"][0]
-            epi_r_elec = info_eval['final_info']["episode"]["elec_r"][0]
+            epi_r_total = info_eval["final_info"][0]["episode"]["r"]
+            epi_r_carb = info_eval["final_info"][0]["episode"]["carb_r"]
+            epi_r_elec = info_eval["final_info"][0]["episode"]["elec_r"]
             print(
                 f"LAST DAY, elec rewards={epi_r_elec}, carb_r={epi_r_carb}, total_r={epi_r_total}"
             )
@@ -150,22 +151,21 @@ class Agent(nn.Module):
     def __init__(self, envs):
         super().__init__()
         self.critic = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.observation_space.shape).prod(), 64)),
+            # layer_init(nn.Linear(np.array(envs.observation_space.shape).prod(), 128)),
+            layer_init(nn.Linear(envs.observation_space.shape[1], 128)),
             nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
+            layer_init(nn.Linear(128, 128)),
             nn.Tanh(),
-            layer_init(nn.Linear(64, 1), std=1.0),
+            layer_init(nn.Linear(128, 1), std=1.0),
         )
         self.actor_mean = nn.Sequential(
-            layer_init(nn.Linear(np.array(envs.observation_space.shape).prod(), 64)),
+            layer_init(nn.Linear(envs.observation_space.shape[1], 128)),
             nn.Tanh(),
-            layer_init(nn.Linear(64, 64)),
+            layer_init(nn.Linear(128, 128)),
             nn.Tanh(),
-            layer_init(nn.Linear(64, np.prod(envs.action_space.shape)), std=0.01),
+            layer_init(nn.Linear(128, envs.action_space.shape[1]), std=0.01),
         )
-        self.actor_logstd = nn.Parameter(
-            torch.zeros(1, np.prod(envs.action_space.shape))
-        )
+        self.actor_logstd = nn.Parameter(torch.zeros(1, envs.action_space.shape[1]))
 
     def get_value(self, x):
         return self.critic(x)
@@ -191,6 +191,7 @@ class Agent(nn.Module):
 
 if __name__ == "__main__":
     jupyter = False
+
     engine = matlab.engine.start_matlab()
     args = parse_args(jupyter)
 
@@ -242,11 +243,11 @@ if __name__ == "__main__":
 
     # ALGO Logic: Storage setup
     obs = torch.zeros(
-        (args.num_steps, args.num_envs) + envs.observation_space.shape
+        (args.num_steps, args.num_envs, envs.observation_space.shape[1])
     ).to(device)
-    actions = torch.zeros((args.num_steps, args.num_envs) + envs.action_space.shape).to(
-        device
-    )
+    actions = torch.zeros(
+        (args.num_steps, args.num_envs, envs.action_space.shape[1])
+    ).to(device)
     logprobs = torch.zeros((args.num_steps, args.num_envs)).to(device)
     rewards = torch.zeros((args.num_steps, args.num_envs)).to(device)
     dones = torch.zeros((args.num_steps, args.num_envs)).to(device)
@@ -264,7 +265,7 @@ if __name__ == "__main__":
     global_step = 0
     start_time = time.time()
     next_obs, _ = envs.reset()
-    next_obs = next_obs.reshape((-1,) + envs.observation_space.shape)
+    # next_obs = next_obs.reshape((-1,) + envs.observation_space.shape)
     next_obs = torch.Tensor(next_obs).to(device)
     next_done = torch.zeros(args.num_envs).to(device)
     num_updates = args.total_timesteps // args.batch_size
@@ -288,12 +289,11 @@ if __name__ == "__main__":
                 action, logprob, _, value = agent.get_action_and_value(next_obs)
                 values[step] = value.flatten()
             actions[step] = action
-            print("actions:", action.cpu().numpy().tolist())
             logprobs[step] = logprob
 
             # TRY NOT TO MODIFY: execute the game and log data.
             next_obs, reward, terminated, truncated, infos = envs.step(
-                action.cpu().numpy().flatten()
+                action.cpu().numpy()
             )
             done = np.logical_or(terminated, truncated)
             rewards[step] = torch.tensor(reward).to(device).view(-1)
@@ -343,9 +343,11 @@ if __name__ == "__main__":
             returns = advantages + values
 
         # flatten the batch
-        b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
+        # b_obs = obs.reshape((-1,) + envs.single_observation_space.shape)
+        b_obs = obs.reshape((-1, envs.observation_space.shape[1]))
         b_logprobs = logprobs.reshape(-1)
-        b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
+        # b_actions = actions.reshape((-1,) + envs.single_action_space.shape)
+        b_actions = actions.reshape((-1, envs.action_space.shape[1]))
         b_advantages = advantages.reshape(-1)
         b_returns = returns.reshape(-1)
         b_values = values.reshape(-1)
@@ -419,7 +421,6 @@ if __name__ == "__main__":
 
         if args.save_model:
             episode_r, epi_elec, epi_carb = evaluate(env_eval, agent, device=device)
-            writer.add_scalar("eval/episodic_r", episode_r, 0)
             if episode_r > eval_episodic_r_best:
                 eval_episodic_r_best = episode_r
                 path = f"runs/{run_name}/{args.exp_name}.cleanrl_model_best_{episode_r:.3f}"

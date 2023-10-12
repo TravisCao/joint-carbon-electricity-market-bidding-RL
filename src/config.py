@@ -50,7 +50,7 @@ class Config:
     cems_data_path = f"{config_file_path}/../data/cems_coef.csv"
 
     # carbon market
-    n_trading_days = 100
+    n_trading_days = 50
 
     # free carbon allowance 90%, expected 46521 * 100 / 6 (n_gens) * 0.9
     carbon_allowance_initial = 3500 * n_trading_days
